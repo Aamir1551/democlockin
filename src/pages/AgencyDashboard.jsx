@@ -196,7 +196,7 @@ export default function AgencyDashboard() {
 
           {/* Filters */}
           <div className="filter-bar">
-            <div className="filter-bar-heading">⚡ Filters</div>
+            <div className="filter-bar-heading">Filters</div>
             <div className="filter-field">
               <label className="filter-label">Worker</label>
               <input type="text" placeholder="e.g. John, Jane" value={filters.worker} onChange={e => setFilter('worker', e.target.value)} />
