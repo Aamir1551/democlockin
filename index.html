@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>Locum Check-In</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --green:  #16a34a;
+      --green-light: #f0fdf4;
+      --green-border: #86efac;
+      --red:    #dc2626;
+      --red-light: #fef2f2;
+      --red-border: #fca5a5;
+      --orange: #d97706;
+      --orange-light: #fffbeb;
+      --orange-border: #fcd34d;
+      --grey:   #6b7280;
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #f9fafb;
+      color: #111827;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 1.5rem 1rem 3rem;
+    }
+
+    /* ── Views (only one visible at a time) ── */
+    .view { display: none; flex-direction: column; align-items: center; width: 100%; max-width: 400px; gap: 1rem; }
+    .view.active { display: flex; }
+
+    /* ── Auth view ── */
+    .auth-card {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 16px;
+      padding: 2rem 1.5rem;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      box-shadow: 0 1px 8px rgba(0,0,0,0.06);
+      margin-top: 4rem;
+    }
+    .auth-logo { font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; color: #9ca3af; }
+    .auth-title { font-size: 1.4rem; font-weight: 700; color: #111827; }
+    .auth-sub   { font-size: 0.875rem; color: #6b7280; line-height: 1.5; }
+
+    /* ── Shift card ── */
+    .shift-card {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 16px;
+      padding: 1.5rem;
+      width: 100%;
+      box-shadow: 0 1px 8px rgba(0,0,0,0.06);
+    }
+    .shift-tag {
+      font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase;
+      color: #9ca3af; margin-bottom: 0.75rem;
+    }
+    .shift-site { font-size: 1.15rem; font-weight: 700; color: #111827; line-height: 1.3; }
+    .shift-ward { font-size: 0.875rem; color: #6b7280; margin-top: 0.2rem; }
+    .shift-time { font-size: 0.875rem; color: #374151; margin-top: 0.75rem; font-weight: 500; }
+    .shift-worker { font-size: 0.8rem; color: #9ca3af; margin-top: 0.3rem; }
+
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 0.35rem;
+      font-size: 0.75rem; font-weight: 600; padding: 0.25rem 0.6rem;
+      border-radius: 100px; margin-bottom: 0.75rem;
+    }
+    .badge-upcoming { background: #f3f4f6; color: #6b7280; }
+    .badge-active   { background: var(--green-light); color: var(--green); }
+    .badge-complete { background: #eff6ff; color: #2563eb; }
+
+    /* ── Big action button ── */
+    .action-btn {
+      width: 100%;
+      padding: 1rem;
+      border-radius: 12px;
+      border: none;
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+      transition: opacity 0.15s, transform 0.1s;
+      font-family: inherit;
+    }
+    .action-btn:active { transform: scale(0.98); }
+    .action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .btn-clock-in  { background: var(--green); color: #fff; }
+    .btn-clock-out { background: var(--red);   color: #fff; }
+    .btn-secondary {
+      background: #fff; color: #374151;
+      border: 1px solid #d1d5db !important;
+      border: none; font-size: 0.875rem; font-weight: 500;
+    }
+    .btn-auth-google    { background: #fff; color: #374151; border: 1px solid #d1d5db; font-weight: 500; }
+    .btn-auth-microsoft { background: #0078d4; color: #fff; border: none; font-weight: 500; }
+
+    /* ── Timer ── */
+    .timer {
+      font-size: 2.5rem; font-weight: 700; color: #111827;
+      letter-spacing: -0.02em; text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+    .timer-label { font-size: 0.78rem; color: #9ca3af; text-align: center; margin-top: -0.25rem; }
+
+    /* ── Confirmation card ── */
+    .confirm-card {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 16px;
+      padding: 2rem 1.5rem;
+      width: 100%;
+      display: flex; flex-direction: column; gap: 0.5rem;
+      box-shadow: 0 1px 8px rgba(0,0,0,0.06);
+    }
+    .confirm-icon { font-size: 2.5rem; margin-bottom: 0.25rem; }
+    .confirm-title { font-size: 1.3rem; font-weight: 700; }
+    .confirm-time  { font-size: 1rem; color: #6b7280; }
+    .confirm-site  { font-size: 0.875rem; color: #374151; font-weight: 500; margin-top: 0.25rem; }
+    .confirm-gps   { font-size: 0.78rem; color: #9ca3af; margin-top: 0.25rem; }
+
+    .confirm-row {
+      display: flex; justify-content: space-between; align-items: baseline;
+      padding: 0.6rem 0; border-bottom: 1px solid #f3f4f6;
+      font-size: 0.875rem;
+    }
+    .confirm-row:last-child { border-bottom: none; }
+    .confirm-row .label { color: #6b7280; }
+    .confirm-row .value { color: #111827; font-weight: 500; }
+
+    /* ── Alert box ── */
+    .alert {
+      width: 100%; border-radius: 10px; padding: 0.875rem 1rem;
+      font-size: 0.875rem; line-height: 1.5; display: none;
+    }
+    .alert.show { display: block; }
+    .alert.warn    { background: var(--orange-light); border: 1px solid var(--orange-border); color: #92400e; }
+    .alert.error   { background: var(--red-light);    border: 1px solid var(--red-border);    color: #991b1b; }
+    .alert.success { background: var(--green-light);  border: 1px solid var(--green-border);  color: #166534; }
+    .alert-title   { font-weight: 600; margin-bottom: 0.25rem; }
+
+    /* ── Top bar ── */
+    .topbar {
+      width: 100%; max-width: 400px;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1rem 0 0.5rem;
+    }
+    .topbar-brand { font-size: 0.78rem; font-weight: 600; color: #9ca3af; letter-spacing: 0.05em; text-transform: uppercase; }
+    .topbar-user  { font-size: 0.78rem; color: #9ca3af; cursor: pointer; }
+    .topbar-user:hover { color: #6b7280; }
+
+    .no-shift {
+      text-align: center; color: #6b7280; font-size: 0.95rem; padding: 2rem 0;
+    }
+    .no-shift strong { display: block; font-size: 1.1rem; color: #374151; margin-bottom: 0.25rem; }
+
+    .or-line { display: flex; align-items: center; gap: 0.5rem; color: #d1d5db; font-size: 0.75rem; }
+    .or-line::before, .or-line::after { content: ''; flex: 1; height: 1px; background: #e5e7eb; }
+  </style>
+</head>
+<body>
+
+<!-- ── Auth view ── -->
+<div class="view active" id="view-auth">
+  <div class="auth-card">
+    <div>
+      <div class="auth-logo">Locum Check-In</div>
+      <div class="auth-title" style="margin-top:0.5rem">Sign in to start</div>
+      <div class="auth-sub" style="margin-top:0.4rem">Use the same account your agency registered you with.</div>
+    </div>
+    <button class="action-btn btn-auth-google" onclick="signIn('google')">
+      <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#4285F4" d="M47.5 24.6c0-1.6-.1-3.1-.4-4.6H24v8.7h13.2c-.6 3-2.3 5.5-4.8 7.2v6h7.7c4.5-4.2 7.1-10.3 7.1-17.3z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.7-6c-2.1 1.4-4.9 2.3-8.2 2.3-6.3 0-11.6-4.2-13.5-9.9H2.5v6.2C6.5 42.6 14.7 48 24 48z"/><path fill="#FBBC05" d="M10.5 28.6c-.5-1.4-.8-2.9-.8-4.6s.3-3.2.8-4.6v-6.2H2.5C.9 16.4 0 20.1 0 24s.9 7.6 2.5 10.8l8-6.2z"/><path fill="#EA4335" d="M24 9.5c3.5 0 6.7 1.2 9.2 3.6l6.8-6.8C35.9 2.4 30.4 0 24 0 14.7 0 6.5 5.4 2.5 13.2l8 6.2C12.4 13.7 17.7 9.5 24 9.5z"/></svg>
+      Continue with Gmail
+    </button>
+    <div class="or-line">or</div>
+    <button class="action-btn btn-auth-microsoft" onclick="signIn('azure')">
+      <svg width="16" height="16" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
+      Continue with Outlook
+    </button>
+  </div>
+</div>
+
+<!-- ── Home / shift view ── -->
+<div class="view" id="view-home">
+  <div class="topbar">
+    <div class="topbar-brand">Locum Check-In</div>
+    <div class="topbar-user" id="topbar-name" onclick="signOut()">Sign out</div>
+  </div>
+
+  <div id="shift-area" style="width:100%">
+    <!-- populated by JS -->
+  </div>
+
+  <div class="alert" id="home-alert"></div>
+</div>
+
+<!-- ── Active shift (clocked in) view ── -->
+<div class="view" id="view-active">
+  <div class="topbar">
+    <div class="topbar-brand">Locum Check-In</div>
+    <div class="topbar-user" id="topbar-name-2"></div>
+  </div>
+
+  <div class="shift-card">
+    <div class="status-badge badge-active">● Live</div>
+    <div class="shift-site" id="active-site"></div>
+    <div class="shift-ward" id="active-ward"></div>
+    <div class="shift-time" id="active-time"></div>
+    <div class="shift-worker" id="active-clocked-in"></div>
+  </div>
+
+  <div class="timer" id="timer">00:00:00</div>
+  <div class="timer-label">time on shift</div>
+
+  <button class="action-btn btn-clock-out" id="clock-out-btn" onclick="clockOut()">⏹ CLOCK OUT</button>
+  <div class="alert" id="active-alert"></div>
+</div>
+
+<!-- ── Confirmation view ── -->
+<div class="view" id="view-confirm">
+  <div class="topbar">
+    <div class="topbar-brand">Locum Check-In</div>
+  </div>
+  <div class="confirm-card" id="confirm-card">
+    <!-- populated by JS -->
+  </div>
+  <button class="action-btn btn-secondary" style="border:1px solid #d1d5db" onclick="goHome()">Done</button>
+</div>
+
+<script>
+  // Auth lives in batleyGPT (OAuth providers configured there)
+  const AUTH_URL = 'https://spndhzwlavoxammqafpn.supabase.co';
+  const AUTH_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNwbmRoendsYXZveGFtbXFhZnBuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYwMjg3NjYsImV4cCI6MjA5MTYwNDc2Nn0.R_jNFKBRakymXKnajZmkY4R0Fw2QnBbcEUPwuIAQQBg';
+  const authSb = supabase.createClient(AUTH_URL, AUTH_KEY);
+
+  // Data lives in democheckin
+  const DATA_URL = 'https://syugdirgamxvkajbkkfq.supabase.co';
+  const DATA_KEY = 'sb_publishable_QnvnZvDIBIKjBQ3EygpZKQ_Q603UgCF';
+  const dataSb = supabase.createClient(DATA_URL, DATA_KEY);
+
+  // ── State ─────────────────────────────────────────────────────────────────
+  let currentUser   = null;
+  let workerRow     = null;
+  let todayShift    = null;
+  let activeCheckIn = null;
+  let timerInterval = null;
+  let clockInTime   = null;
+
+  // ── Geo helpers ───────────────────────────────────────────────────────────
+  function pip(lat, lon, poly) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const [yi, xi] = poly[i], [yj, xj] = poly[j];
+      if (((yi > lat) !== (yj > lat)) && lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)
+        inside = !inside;
+    }
+    return inside;
+  }
+
+  function haversine(lat1, lon1, lat2, lon2) {
+    const R = 6371000, dLat = (lat2-lat1)*Math.PI/180, dLon = (lon2-lon1)*Math.PI/180;
+    const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  function distToPolyVerts(lat, lon, poly) {
+    return Math.min(...poly.map(([v1, v2]) => haversine(lat, lon, v1, v2)));
+  }
+
+  function checkSite(lat, lon, site) {
+    if (site.use_polygon && site.polygons) {
+      const polys = site.polygons;
+      const inside = polys.some(poly => pip(lat, lon, poly));
+      if (inside) return { inside: true, distance: 0 };
+      const dist = Math.min(...polys.map(poly => distToPolyVerts(lat, lon, poly)));
+      return { inside: false, distance: Math.round(dist) };
+    }
+    const dist = haversine(lat, lon, site.lat, site.lon);
+    return { inside: dist <= site.geofence_radius_m, distance: Math.max(0, Math.round(dist - site.geofence_radius_m)) };
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function showView(id) {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+  }
+
+  function fmtTime(d) {
+    return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function fmtDuration(ms) {
+    const s = Math.floor(ms / 1000);
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sc = s % 60;
+    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sc).padStart(2,'0')}`;
+  }
+
+  function setAlert(id, type, title, body) {
+    const el = document.getElementById(id);
+    el.className = `alert ${type} show`;
+    el.innerHTML = `<div class="alert-title">${title}</div>${body}`;
+  }
+
+  function clearAlert(id) { document.getElementById(id).className = 'alert'; }
+
+  // ── Auth ──────────────────────────────────────────────────────────────────
+  function signIn(provider) {
+    authSb.auth.signInWithOAuth({ provider, options: { redirectTo: 'http://localhost:3000/' } });
+  }
+
+  async function signOut() {
+    if (!confirm('Sign out?')) return;
+    await authSb.auth.signOut();
+    currentUser = null; workerRow = null; todayShift = null; activeCheckIn = null;
+    stopTimer();
+    showView('view-auth');
+  }
+
+  authSb.auth.onAuthStateChange(async (_e, session) => {
+    currentUser = session?.user ?? null;
+    if (currentUser) {
+      await ensureWorker();
+      await loadTodayShift();
+    } else {
+      showView('view-auth');
+    }
+  });
+
+  // ── Worker profile ────────────────────────────────────────────────────────
+  async function ensureWorker() {
+    const name  = currentUser.user_metadata?.full_name || currentUser.email.split('@')[0];
+    const email = currentUser.email;
+
+    const { data, error } = await dataSb.from('workers')
+      .upsert({ auth_user_id: currentUser.id, name, email }, { onConflict: 'auth_user_id' })
+      .select().single();
+
+    if (!error) workerRow = data;
+  }
+
+  // ── Load today's shift ────────────────────────────────────────────────────
+  async function loadTodayShift() {
+    if (!workerRow) return;
+
+    const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+    const todayEnd   = new Date(); todayEnd.setHours(23,59,59,999);
+
+    const { data: shifts } = await dataSb.from('shifts')
+      .select('*, site:sites(*)')
+      .eq('worker_id', workerRow.id)
+      .gte('scheduled_start', todayStart.toISOString())
+      .lte('scheduled_start', todayEnd.toISOString())
+      .order('scheduled_start')
+      .limit(1);
+
+    todayShift = shifts?.[0] ?? null;
+
+    // Check if already clocked in
+    if (todayShift) {
+      const { data: ci } = await dataSb.from('check_ins')
+        .select('*')
+        .eq('shift_id', todayShift.id)
+        .is('clocked_out_at', null)
+        .maybeSingle();
+      activeCheckIn = ci;
+    }
+
+    if (activeCheckIn) {
+      renderActiveView();
+    } else {
+      renderHomeView();
+    }
+  }
+
+  // ── Home view ─────────────────────────────────────────────────────────────
+  function renderHomeView() {
+    const name = workerRow?.name || currentUser?.user_metadata?.full_name || '';
+    document.getElementById('topbar-name').textContent = name;
+
+    const area = document.getElementById('shift-area');
+    clearAlert('home-alert');
+
+    if (!todayShift) {
+      area.innerHTML = `<div class="no-shift"><strong>No shift today</strong>You have no shifts scheduled for today.</div>`;
+      showView('view-home');
+      return;
+    }
+
+    const site = todayShift.site;
+    const start = new Date(todayShift.scheduled_start);
+    const end   = new Date(todayShift.scheduled_end);
+
+    area.innerHTML = `
+      <div class="shift-card">
+        <div class="status-badge badge-upcoming">Today's Shift</div>
+        <div class="shift-site">${site.name}</div>
+        ${todayShift.ward ? `<div class="shift-ward">${todayShift.ward}</div>` : ''}
+        <div class="shift-time">${fmtTime(start)} – ${fmtTime(end)}</div>
+        <div class="shift-worker">${workerRow?.name || ''}</div>
+      </div>
+      <button class="action-btn btn-clock-in" onclick="clockIn()" style="margin-top:1.5rem">▶ CLOCK IN</button>`;
+
+    showView('view-home');
+  }
+
+  // ── Clock in ──────────────────────────────────────────────────────────────
+  async function clockIn() {
+    const btn = document.querySelector('.btn-clock-in');
+    btn.disabled = true; btn.textContent = 'Getting location…';
+    clearAlert('home-alert');
+
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      const { latitude: lat, longitude: lon } = pos.coords;
+      const site   = todayShift.site;
+      const result = checkSite(lat, lon, site);
+
+      if (result.inside) {
+        await doClockIn(lat, lon, result, true);
+      } else {
+        btn.disabled = false; btn.textContent = '▶ CLOCK IN';
+        const el = document.getElementById('home-alert');
+        el.className = 'alert warn show';
+        el.innerHTML = `
+          <div class="alert-title">⚠ You're far from site</div>
+          You appear to be <strong>${result.distance}m</strong> away from ${site.name}.
+          <div style="margin-top:0.75rem;display:flex;gap:0.5rem">
+            <button class="action-btn btn-secondary" style="flex:1;padding:0.6rem;font-size:0.85rem" onclick="clearAlert('home-alert')">Cancel</button>
+            <button class="action-btn btn-clock-in" style="flex:1;padding:0.6rem;font-size:0.85rem" onclick="doClockIn(${lat},${lon},{inside:false,distance:${result.distance}},false)">Clock in anyway</button>
+          </div>`;
+      }
+    }, (err) => {
+      btn.disabled = false; btn.textContent = '▶ CLOCK IN';
+      const msgs = { 1: 'Location permission denied.', 2: 'Position unavailable.', 3: 'Request timed out.' };
+      setAlert('home-alert', 'error', 'Location error', msgs[err.code] || 'Unknown error.');
+    }, { enableHighAccuracy: true, timeout: 12000 });
+  }
+
+  async function doClockIn(lat, lon, result, geofencePassed) {
+    clearAlert('home-alert');
+    const site = todayShift.site;
+    const { data, error } = await dataSb.from('check_ins').insert({
+      shift_id: todayShift.id,
+      worker_id: workerRow.id,
+      site_id: site.id,
+      clocked_in_at: new Date().toISOString(),
+      clock_in_lat: lat,
+      clock_in_lon: lon,
+      clock_in_distance_m: result.distance,
+      clock_in_geofence_passed: geofencePassed,
+    }).select().single();
+
+    if (!error) {
+      activeCheckIn = data;
+      await dataSb.from('shifts').update({ status: 'active' }).eq('id', todayShift.id);
+      renderActiveView();
+    }
+  }
+
+  // ── Active shift view ─────────────────────────────────────────────────────
+  function renderActiveView() {
+    const site  = todayShift.site;
+    const start = new Date(todayShift.scheduled_start);
+    const end   = new Date(todayShift.scheduled_end);
+    clockInTime = new Date(activeCheckIn.clocked_in_at);
+
+    document.getElementById('topbar-name-2').textContent = workerRow?.name || '';
+    document.getElementById('active-site').textContent = site.name;
+    document.getElementById('active-ward').textContent = todayShift.ward || '';
+    document.getElementById('active-time').textContent = `${fmtTime(start)} – ${fmtTime(end)}`;
+    document.getElementById('active-clocked-in').textContent = `Clocked in at ${fmtTime(clockInTime)}`;
+
+    startTimer();
+    showView('view-active');
+  }
+
+  function startTimer() {
+    stopTimer();
+    timerInterval = setInterval(() => {
+      const elapsed = Date.now() - clockInTime.getTime();
+      document.getElementById('timer').textContent = fmtDuration(elapsed);
+    }, 1000);
+  }
+
+  function stopTimer() {
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  }
+
+  // ── Clock out ─────────────────────────────────────────────────────────────
+  async function clockOut() {
+    const btn = document.getElementById('clock-out-btn');
+    btn.disabled = true; btn.textContent = 'Getting location…';
+    clearAlert('active-alert');
+
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      const { latitude: lat, longitude: lon } = pos.coords;
+      const now = new Date();
+      const durationMins = Math.round((now - clockInTime) / 60000);
+      const site = todayShift.site;
+      const result = checkSite(lat, lon, site);
+
+      await dataSb.from('check_ins').update({
+        clocked_out_at: now.toISOString(),
+        clock_out_lat: lat,
+        clock_out_lon: lon,
+        clock_out_distance_m: result.distance,
+        duration_minutes: durationMins,
+      }).eq('id', activeCheckIn.id);
+
+      await dataSb.from('shifts').update({ status: 'complete' }).eq('id', todayShift.id);
+
+      stopTimer();
+      renderConfirmView(now, durationMins, result.distance);
+    }, (err) => {
+      btn.disabled = false; btn.textContent = '⏹ CLOCK OUT';
+      const msgs = { 1: 'Location permission denied.', 2: 'Position unavailable.', 3: 'Timed out.' };
+      setAlert('active-alert', 'error', 'Location error', msgs[err.code] || 'Unknown error.');
+    }, { enableHighAccuracy: true, timeout: 12000 });
+  }
+
+  // ── Confirmation view ─────────────────────────────────────────────────────
+  function renderConfirmView(clockOutTime, durationMins, distOut) {
+    const h = Math.floor(durationMins / 60), m = durationMins % 60;
+    const durStr = h > 0 ? `${h}h ${m}m` : `${m}m`;
+    const site = todayShift.site;
+
+    document.getElementById('confirm-card').innerHTML = `
+      <div class="confirm-icon">✅</div>
+      <div class="confirm-title">Shift complete</div>
+      <div style="height:0.5rem"></div>
+      <div class="confirm-row"><span class="label">Site</span><span class="value">${site.name}</span></div>
+      ${todayShift.ward ? `<div class="confirm-row"><span class="label">Ward</span><span class="value">${todayShift.ward}</span></div>` : ''}
+      <div class="confirm-row"><span class="label">Clocked in</span><span class="value">${fmtTime(clockInTime)}</span></div>
+      <div class="confirm-row"><span class="label">Clocked out</span><span class="value">${fmtTime(clockOutTime)}</span></div>
+      <div class="confirm-row"><span class="label">Duration</span><span class="value">${durStr}</span></div>
+      <div class="confirm-row"><span class="label">Exit distance</span><span class="value">${distOut}m from site</span></div>
+      <div class="confirm-row"><span class="label">Status</span><span class="value" style="color:var(--green);font-weight:600">✓ Verified</span></div>
+    `;
+    showView('view-confirm');
+  }
+
+  async function goHome() {
+    activeCheckIn = null;
+    await loadTodayShift();
+  }
+</script>
+</body>
+</html>
