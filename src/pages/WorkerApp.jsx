@@ -293,7 +293,7 @@ export default function WorkerApp() {
           onClick={clockOut}
           disabled={loading === 'out'}
         >
-          {loading === 'out' ? 'Getting location…' : '⏹ CLOCK OUT'}
+          {loading === 'out' ? 'Getting location…' : '⏹︎ CLOCK OUT'}
         </button>
 
         {alert?.type === 'error' && (
