@@ -152,7 +152,7 @@ export default function WorkerApp() {
             <Logo size={40} textSize="1.25rem" />
             <div className="auth-title" style={{ marginTop: '1rem' }}>Sign in to start</div>
             <div className="auth-sub" style={{ marginTop: '0.4rem' }}>
-              Use your NHS or work account to clock in at any hospital.
+              Sign in with the email address agreed with your agency.
             </div>
           </div>
           <button className="action-btn btn-auth-google" onClick={() => signIn('google')}>

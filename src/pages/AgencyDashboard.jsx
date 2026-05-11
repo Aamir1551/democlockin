@@ -6,9 +6,8 @@ import { GoogleIcon, MicrosoftIcon } from '../components/OAuthIcons.jsx';
 
 export default function AgencyDashboard() {
   const [currentUser, setCurrentUser] = useState(null);
-  const [live, setLive]       = useState(null);   // currently clocked-in workers
-  const [history, setHistory] = useState(null);   // completed check-ins
-  const autoRefreshRef = useRef(null);
+  const [live, setLive]       = useState(null);
+  const [history, setHistory] = useState(null);
 
   // ── Auth ───────────────────────────────────────────────────────────────────
 
@@ -19,13 +18,13 @@ export default function AgencyDashboard() {
       if (user) await loadAll();
     });
     return () => subscription.unsubscribe();
-  }, []); // eslint-disable-line
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!currentUser) return;
-    autoRefreshRef.current = setInterval(loadLive, 30000);
-    return () => clearInterval(autoRefreshRef.current);
-  }, [currentUser]); // eslint-disable-line
+    const id = setInterval(loadLive, 30000);
+    return () => clearInterval(id);
+  }, [currentUser]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function signIn(provider) {
     authSb.auth.signInWithOAuth({ provider, options: { redirectTo: window.location.href } });
