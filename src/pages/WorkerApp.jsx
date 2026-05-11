@@ -1,77 +1,56 @@
 import React, { useState, useEffect } from 'react';
 import { authSb, dataSb } from '../lib/supabase.js';
-import { checkSite } from '../lib/geo.js';
+import { checkSite, getLocation } from '../lib/geo.js';
+import { fmtTime } from '../lib/format.js';
 import Logo from '../components/Logo.jsx';
-
-function fmtTime(d) {
-  return new Date(d).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-}
-
-const GoogleSvg = () => (
-  <svg width="16" height="16" viewBox="0 0 48 48">
-    <path fill="#4285F4" d="M47.5 24.6c0-1.6-.1-3.1-.4-4.6H24v8.7h13.2c-.6 3-2.3 5.5-4.8 7.2v6h7.7c4.5-4.2 7.1-10.3 7.1-17.3z"/>
-    <path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.7-6c-2.1 1.4-4.9 2.3-8.2 2.3-6.3 0-11.6-4.2-13.5-9.9H2.5v6.2C6.5 42.6 14.7 48 24 48z"/>
-    <path fill="#FBBC05" d="M10.5 28.6c-.5-1.4-.8-2.9-.8-4.6s.3-3.2.8-4.6v-6.2H2.5C.9 16.4 0 20.1 0 24s.9 7.6 2.5 10.8l8-6.2z"/>
-    <path fill="#EA4335" d="M24 9.5c3.5 0 6.7 1.2 9.2 3.6l6.8-6.8C35.9 2.4 30.4 0 24 0 14.7 0 6.5 5.4 2.5 13.2l8 6.2C12.4 13.7 17.7 9.5 24 9.5z"/>
-  </svg>
-);
-
-const MicrosoftSvg = () => (
-  <svg width="16" height="16" viewBox="0 0 21 21">
-    <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
-    <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
-    <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
-    <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
-  </svg>
-);
+import { GoogleIcon, MicrosoftIcon } from '../components/OAuthIcons.jsx';
 
 export default function WorkerApp() {
-  const [view, setView]               = useState('auth');
   const [currentUser, setCurrentUser] = useState(null);
   const [workerRow, setWorkerRow]     = useState(null);
-
   const [sites, setSites]             = useState([]);
-  const [selectedSiteId, setSelectedSiteId] = useState('');
   const [siteFilter, setSiteFilter]   = useState('');
+  const [selectedSiteId, setSelectedSiteId] = useState('');
+  const [checkIns, setCheckIns]       = useState([]); // today's check-ins
+  const [loading, setLoading]         = useState(null); // 'in' | 'out' | null
+  const [alert, setAlert]             = useState(null);
 
-  const [todayCheckIns, setTodayCheckIns] = useState([]);
-  const [openCheckIn, setOpenCheckIn]     = useState(null);   // currently clocked in
-  const [openSite, setOpenSite]           = useState(null);   // site of open check-in
-  const [clockInTime, setClockInTime]     = useState(null);
-
-  const [clockInLoading, setClockInLoading]   = useState(false);
-  const [clockOutLoading, setClockOutLoading] = useState(false);
-  const [alert, setAlert]             = useState(null); // { type, title?, body?, warnData? }
+  // ── Derived ────────────────────────────────────────────────────────────────
+  const openCheckIn    = checkIns.find(c => !c.clocked_out_at) ?? null;
+  const completedToday = checkIns.filter(c => c.clocked_out_at);
+  const workerName     = workerRow?.name || currentUser?.user_metadata?.full_name || '';
+  const filteredSites  = siteFilter.trim().length < 2
+    ? sites
+    : sites.filter(s => s.name.toLowerCase().includes(siteFilter.toLowerCase()));
+  const view = !currentUser ? 'auth' : openCheckIn ? 'active' : 'home';
 
   // ── Auth ───────────────────────────────────────────────────────────────────
-
   useEffect(() => {
     const { data: { subscription } } = authSb.auth.onAuthStateChange(async (_e, session) => {
       const user = session?.user ?? null;
       setCurrentUser(user);
       if (user) {
         const worker = await ensureWorker(user);
-        if (worker) await loadData(worker);
+        if (worker) await loadData(worker.id);
       } else {
-        setView('auth');
+        setWorkerRow(null);
+        setCheckIns([]);
       }
     });
     return () => subscription.unsubscribe();
-  }, []); // eslint-disable-line
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function signIn(provider) {
-    authSb.auth.signInWithOAuth({ provider, options: { redirectTo: 'http://localhost:3000/' } });
+    authSb.auth.signInWithOAuth({ provider, options: { redirectTo: window.location.href } });
   }
 
   async function signOut() {
     if (!confirm('Sign out?')) return;
     await authSb.auth.signOut();
-    setCurrentUser(null); setWorkerRow(null);
-    setOpenCheckIn(null); setView('auth');
+    // onAuthStateChange handles state cleanup
   }
 
   // ── Worker profile ─────────────────────────────────────────────────────────
-
   async function ensureWorker(user) {
     const name = user.user_metadata?.full_name || user.email.split('@')[0];
     const { data, error } = await dataSb.from('workers')
@@ -81,61 +60,42 @@ export default function WorkerApp() {
     return null;
   }
 
-  // ── Load sites + today's check-ins ────────────────────────────────────────
-
-  async function loadData(worker) {
-    const wr = worker || workerRow;
-    if (!wr) return;
-
-    // Load all hospital sites (sorted alphabetically)
-    const { data: siteRows } = await dataSb.from('sites')
-      .select('*')
-      .eq('type', 'hospital')
-      .order('name');
-    setSites(siteRows || []);
-
-    // Load today's check-ins for this worker
+  // ── Data ───────────────────────────────────────────────────────────────────
+  async function loadData(workerId) {
     const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-    const { data: cis } = await dataSb.from('check_ins')
-      .select('*, site:sites(*)')
-      .eq('worker_id', wr.id)
-      .gte('clocked_in_at', todayStart.toISOString())
-      .order('clocked_in_at');
-
-    setTodayCheckIns(cis || []);
-
-    const open = cis?.find(c => !c.clocked_out_at) ?? null;
-    setOpenCheckIn(open);
-    setOpenSite(open?.site ?? null);
-    if (open) setClockInTime(new Date(open.clocked_in_at));
-
-    setView(open ? 'active' : 'home');
+    const [{ data: siteRows }, { data: cis }] = await Promise.all([
+      dataSb.from('sites').select('*').eq('type', 'hospital').order('name'),
+      dataSb.from('check_ins')
+        .select('*, site:sites(*)')
+        .eq('worker_id', workerId)
+        .gte('clocked_in_at', todayStart.toISOString())
+        .order('clocked_in_at'),
+    ]);
+    setSites(siteRows || []);
+    setCheckIns(cis || []);
   }
 
   // ── Clock in ───────────────────────────────────────────────────────────────
-
-  function clockIn() {
+  async function clockIn() {
     const site = sites.find(s => s.id === selectedSiteId);
     if (!site) { setAlert({ type: 'error', title: 'Select a hospital first' }); return; }
 
-    setClockInLoading(true);
+    setLoading('in');
     setAlert(null);
 
-    navigator.geolocation.getCurrentPosition(async (pos) => {
-      const { latitude: lat, longitude: lon } = pos.coords;
+    try {
+      const { lat, lon } = await getLocation();
       const result = checkSite(lat, lon, site);
-
       if (result.inside) {
         await doClockIn(site, lat, lon, result, true);
       } else {
-        setClockInLoading(false);
         setAlert({ type: 'warn', warnData: { site, lat, lon, result } });
       }
-    }, (err) => {
-      setClockInLoading(false);
-      const msgs = { 1: 'Location permission denied.', 2: 'Position unavailable.', 3: 'Request timed out.' };
-      setAlert({ type: 'error', title: 'Location error', body: msgs[err.code] || 'Unknown error.' });
-    }, { enableHighAccuracy: true, timeout: 12000 });
+    } catch (err) {
+      setAlert({ type: 'error', title: 'Location error', body: err.message });
+    } finally {
+      setLoading(null);
+    }
   }
 
   async function doClockIn(site, lat, lon, result, geofencePassed) {
@@ -150,55 +110,38 @@ export default function WorkerApp() {
       clock_in_geofence_passed: geofencePassed,
     }).select('*, site:sites(*)').single();
 
-    if (!error) {
-      setOpenCheckIn(data);
-      setOpenSite(data.site);
-      setClockInTime(new Date(data.clocked_in_at));
-      setView('active');
+    if (error) {
+      setAlert({ type: 'error', title: 'Clock-in failed', body: error.message });
+    } else {
+      setCheckIns(prev => [...prev, data]); // view derives to 'active' automatically
     }
-    setClockInLoading(false);
   }
 
   // ── Clock out ──────────────────────────────────────────────────────────────
-
-  function clockOut() {
-    setClockOutLoading(true);
+  async function clockOut() {
+    setLoading('out');
     setAlert(null);
 
-    navigator.geolocation.getCurrentPosition(async (pos) => {
-      const { latitude: lat, longitude: lon } = pos.coords;
+    try {
+      const { lat, lon } = await getLocation();
       const now = new Date();
-      const durationMins = Math.round((now - clockInTime) / 60000);
-      const result = checkSite(lat, lon, openSite);
-
       await dataSb.from('check_ins').update({
         clocked_out_at: now.toISOString(),
         clock_out_lat: lat,
         clock_out_lon: lon,
-        clock_out_distance_m: result.distance,
-        duration_minutes: durationMins,
+        clock_out_distance_m: checkSite(lat, lon, openCheckIn.site).distance,
+        duration_minutes: Math.round((now - new Date(openCheckIn.clocked_in_at)) / 60000),
       }).eq('id', openCheckIn.id);
 
-      setClockOutLoading(false);
-      await loadData(workerRow);
-    }, (err) => {
-      setClockOutLoading(false);
-      const msgs = { 1: 'Location permission denied.', 2: 'Position unavailable.', 3: 'Timed out.' };
-      setAlert({ type: 'error', title: 'Location error', body: msgs[err.code] || 'Unknown error.' });
-    }, { enableHighAccuracy: true, timeout: 12000 });
+      await loadData(workerRow.id);
+    } catch (err) {
+      setAlert({ type: 'error', title: 'Location error', body: err.message });
+    } finally {
+      setLoading(null);
+    }
   }
 
-  // ── Filtered site list for search ──────────────────────────────────────────
-
-  const filteredSites = siteFilter.trim().length < 2
-    ? sites
-    : sites.filter(s => s.name.toLowerCase().includes(siteFilter.toLowerCase()));
-
-  const workerName = workerRow?.name || currentUser?.user_metadata?.full_name || '';
-  const completedToday = todayCheckIns.filter(c => c.clocked_out_at);
-
   // ── Render ─────────────────────────────────────────────────────────────────
-
   return (
     <div className="worker-body">
 
@@ -213,11 +156,11 @@ export default function WorkerApp() {
             </div>
           </div>
           <button className="action-btn btn-auth-google" onClick={() => signIn('google')}>
-            <GoogleSvg /> Continue with Gmail
+            <GoogleIcon /> Continue with Gmail
           </button>
           <div className="or-line">or</div>
           <button className="action-btn btn-auth-microsoft" onClick={() => signIn('azure')}>
-            <MicrosoftSvg /> Continue with Outlook
+            <MicrosoftIcon /> Continue with Outlook
           </button>
         </div>
       </div>
@@ -232,7 +175,6 @@ export default function WorkerApp() {
           <button className="signout-btn" onClick={signOut}>Log out</button>
         </div>
 
-        {/* Today's completed sessions */}
         {completedToday.length > 0 && (
           <div className="shift-card" style={{ width: '100%' }}>
             <div className="shift-tag">Today's sessions</div>
@@ -249,7 +191,6 @@ export default function WorkerApp() {
           </div>
         )}
 
-        {/* Clock-in form */}
         <div className="shift-card" style={{ width: '100%' }}>
           <div className="shift-tag">Clock in</div>
 
@@ -263,10 +204,7 @@ export default function WorkerApp() {
           />
 
           <label className="field-label">Select hospital</label>
-          <select
-            value={selectedSiteId}
-            onChange={e => setSelectedSiteId(e.target.value)}
-          >
+          <select value={selectedSiteId} onChange={e => setSelectedSiteId(e.target.value)}>
             <option value="">— choose a hospital —</option>
             {filteredSites.map(s => (
               <option key={s.id} value={s.id}>{s.name}</option>
@@ -278,12 +216,11 @@ export default function WorkerApp() {
           className="action-btn btn-clock-in"
           style={{ marginTop: '0.75rem' }}
           onClick={clockIn}
-          disabled={clockInLoading || !selectedSiteId}
+          disabled={loading === 'in' || !selectedSiteId}
         >
-          {clockInLoading ? 'Getting location…' : '▶ CLOCK IN'}
+          {loading === 'in' ? 'Getting location…' : '▶ CLOCK IN'}
         </button>
 
-        {/* Geo warning */}
         {alert?.type === 'warn' && alert.warnData && (
           <div className="alert warn" style={{ width: '100%' }}>
             <div className="alert-title">You're far from site</div>
@@ -325,16 +262,14 @@ export default function WorkerApp() {
           <button className="signout-btn" onClick={signOut}>Log out</button>
         </div>
 
-        {openSite && (
+        {openCheckIn && (
           <div className="shift-card" style={{ width: '100%' }}>
             <div className="status-badge badge-active">● Clocked in</div>
-            <div className="shift-site">{openSite.name}</div>
-            {clockInTime && (
-              <div className="shift-time" style={{ marginTop: '0.5rem' }}>
-                Since {fmtTime(clockInTime)}
-              </div>
-            )}
-            {!openCheckIn?.clock_in_geofence_passed && (
+            <div className="shift-site">{openCheckIn.site.name}</div>
+            <div className="shift-time" style={{ marginTop: '0.5rem' }}>
+              Since {fmtTime(openCheckIn.clocked_in_at)}
+            </div>
+            {!openCheckIn.clock_in_geofence_passed && (
               <div className="shift-worker" style={{ color: 'var(--orange)', marginTop: '0.3rem' }}>
                 ⚠ Clocked in outside geofence
               </div>
@@ -346,13 +281,13 @@ export default function WorkerApp() {
           className="action-btn btn-clock-out"
           style={{ marginTop: '1rem' }}
           onClick={clockOut}
-          disabled={clockOutLoading}
+          disabled={loading === 'out'}
         >
-          {clockOutLoading ? 'Getting location…' : '⏹ CLOCK OUT'}
+          {loading === 'out' ? 'Getting location…' : '⏹ CLOCK OUT'}
         </button>
 
         {alert?.type === 'error' && (
-          <div className={`alert ${alert.type}`} style={{ width: '100%' }}>
+          <div className="alert error" style={{ width: '100%' }}>
             <div className="alert-title">{alert.title}</div>
             {alert.body}
           </div>

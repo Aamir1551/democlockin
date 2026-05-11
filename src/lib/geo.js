@@ -1,3 +1,19 @@
+const GEO_ERRORS = {
+  1: 'Location permission denied.',
+  2: 'Position unavailable.',
+  3: 'Request timed out.',
+};
+
+export function getLocation() {
+  return new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+      err => reject(new Error(GEO_ERRORS[err.code] ?? 'Unknown location error.')),
+      { enableHighAccuracy: true, timeout: 12000 }
+    );
+  });
+}
+
 // Ray-casting point-in-polygon
 export function pip(lat, lon, poly) {
   let inside = false;
