@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import * as XLSX from 'xlsx';
 import { authSb, dataSb } from '../lib/supabase.js';
 import { fmtTime, fmtDate, fmtDuration } from '../lib/format.js';
 import Logo from '../components/Logo.jsx';
@@ -51,6 +52,23 @@ export default function AgencyDashboard() {
       .is('clocked_out_at', null)
       .order('clocked_in_at', { ascending: false });
     setLive(data || []);
+  }
+
+  function exportExcel() {
+    const rows = (history || []).map(c => ({
+      Worker:       c.worker?.name || c.worker?.email || '—',
+      Hospital:     c.site?.name || '—',
+      Date:         fmtDate(c.clocked_in_at),
+      'Clocked In': fmtTime(c.clocked_in_at),
+      'Clocked Out': c.clocked_out_at ? fmtTime(c.clocked_out_at) : '—',
+      Duration:     fmtDuration(c.duration_minutes),
+      'Distance In': c.clock_in_distance_m != null ? `${c.clock_in_distance_m}m` : '—',
+      Geofence:     c.clock_in_geofence_passed ? 'Pass' : 'Outside',
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Check-in History');
+    XLSX.writeFile(wb, `checkin-history-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
   async function loadHistory() {
@@ -133,7 +151,10 @@ export default function AgencyDashboard() {
 
         {/* History */}
         <div>
-          <div className="section-title">Check-in History</div>
+          <div className="section-title">
+            <span>Check-in History</span>
+            <button className="refresh-btn" onClick={exportExcel} disabled={!history?.length}>↓ Download Excel</button>
+          </div>
           <div className="table-wrap">
             <table>
               <thead>
