@@ -26,8 +26,7 @@ export default function WorkerApp() {
 
   // ── Auth ───────────────────────────────────────────────────────────────────
   useEffect(() => {
-    const { data: { subscription } } = authSb.auth.onAuthStateChange(async (_e, session) => {
-      const user = session?.user ?? null;
+    async function handleUser(user) {
       setCurrentUser(user);
       if (user) {
         const worker = await ensureWorker(user);
@@ -36,12 +35,23 @@ export default function WorkerApp() {
         setWorkerRow(null);
         setCheckIns([]);
       }
+    }
+
+    // Explicit getSession covers mobile Safari where INITIAL_SESSION can
+    // fire before the listener below is registered.
+    authSb.auth.getSession().then(({ data: { session } }) => {
+      handleUser(session?.user ?? null);
+    });
+
+    const { data: { subscription } } = authSb.auth.onAuthStateChange(async (_e, session) => {
+      handleUser(session?.user ?? null);
     });
     return () => subscription.unsubscribe();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function signIn(provider) {
-    authSb.auth.signInWithOAuth({ provider, options: { redirectTo: window.location.href } });
+    const redirectTo = window.location.origin + window.location.pathname;
+    authSb.auth.signInWithOAuth({ provider, options: { redirectTo } });
   }
 
   async function signOut() {

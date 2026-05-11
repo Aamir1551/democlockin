@@ -12,6 +12,10 @@ export default function AgencyDashboard() {
   // ── Auth ───────────────────────────────────────────────────────────────────
 
   useEffect(() => {
+    authSb.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) { setCurrentUser(session.user); loadAll(); }
+    });
+
     const { data: { subscription } } = authSb.auth.onAuthStateChange(async (_e, session) => {
       const user = session?.user ?? null;
       setCurrentUser(user);
@@ -27,7 +31,8 @@ export default function AgencyDashboard() {
   }, [currentUser]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function signIn(provider) {
-    authSb.auth.signInWithOAuth({ provider, options: { redirectTo: window.location.href } });
+    const redirectTo = window.location.origin + window.location.pathname;
+    authSb.auth.signInWithOAuth({ provider, options: { redirectTo } });
   }
   async function signOut() {
     await authSb.auth.signOut();
