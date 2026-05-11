@@ -153,7 +153,7 @@ export default function AgencyDashboard() {
         <div>
           <div className="section-title">
             <span>Check-in History</span>
-            <button className="refresh-btn" onClick={exportExcel} disabled={!history?.length}>↓ Download Excel</button>
+            <button className="download-btn" onClick={exportExcel} disabled={!history?.length}>↓ Download Excel</button>
           </div>
           <div className="table-wrap">
             <table>

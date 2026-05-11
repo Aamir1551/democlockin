@@ -218,6 +218,9 @@ tbody tr:hover td { background: #fafafa; }
 
 .refresh-btn { font-size: 0.75rem; color: #9ca3af; cursor: pointer; border: none; background: none; font-family: inherit; }
 .refresh-btn:hover { color: #374151; }
+.download-btn { font-size: 0.75rem; color: #fff; cursor: pointer; border: none; background: #2563eb; font-family: inherit; padding: 0.25rem 0.75rem; border-radius: 100px; font-weight: 500; }
+.download-btn:hover { background: #1d4ed8; }
+.download-btn:disabled { opacity: 0.4; cursor: default; }
 
 label.field-label { font-size: 0.75rem; color: #6b7280; display: block; margin-bottom: 0.3rem; }
 select, input[type="text"], input[type="datetime-local"] {
