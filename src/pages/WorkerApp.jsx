@@ -225,8 +225,11 @@ export default function WorkerApp() {
       {/* ── Home ── */}
       <div className={`view${view === 'home' ? ' active' : ''}`}>
         <div className="topbar">
-          <Logo size={26} textSize="0.9rem" />
-          <div className="topbar-user" onClick={signOut}>{workerName || 'Sign out'}</div>
+          <div>
+            <Logo size={26} textSize="0.9rem" />
+            <div className="topbar-signed-in">Signed in as {workerName || currentUser?.email}</div>
+          </div>
+          <button className="signout-btn" onClick={signOut}>Log out</button>
         </div>
 
         {/* Today's completed sessions */}

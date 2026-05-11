@@ -146,9 +146,8 @@ body {
   display: flex; align-items: center; justify-content: space-between;
   padding: 1rem 0 0.5rem;
 }
-.topbar-brand { font-size: 0.78rem; font-weight: 600; color: #9ca3af; letter-spacing: 0.05em; text-transform: uppercase; }
-.topbar-user  { font-size: 0.78rem; color: #9ca3af; cursor: pointer; }
-.topbar-user:hover { color: #6b7280; }
+.topbar-brand      { font-size: 0.78rem; font-weight: 600; color: #9ca3af; letter-spacing: 0.05em; text-transform: uppercase; }
+.topbar-signed-in  { font-size: 0.72rem; color: #9ca3af; margin-top: 0.2rem; }
 
 .no-shift { text-align: center; color: #6b7280; font-size: 0.95rem; padding: 2rem 0; }
 .no-shift strong { display: block; font-size: 1.1rem; color: #374151; margin-bottom: 0.25rem; }
