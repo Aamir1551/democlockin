@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { authSb, dataSb } from '../lib/supabase.js';
 import { fmtTime, fmtDate, fmtDuration } from '../lib/format.js';
@@ -9,6 +9,16 @@ export default function AgencyDashboard() {
   const [currentUser, setCurrentUser] = useState(null);
   const [live, setLive]       = useState(null);
   const [history, setHistory] = useState(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // ── Auth ───────────────────────────────────────────────────────────────────
 
@@ -110,9 +120,19 @@ export default function AgencyDashboard() {
         <span style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', fontWeight: 700, fontSize: '0.95rem' }}>
           Agency Dashboard
         </span>
-        <div className="header-right">
-          <span className="header-user">{userName}</span>
-          <button className="signout-btn" onClick={signOut}>Sign out</button>
+        <div className="user-menu" ref={menuRef}>
+          <button className="user-menu-trigger" onClick={() => setMenuOpen(o => !o)}>
+            {userName}
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+              <path d="M6 8L1 3h10z"/>
+            </svg>
+          </button>
+          {menuOpen && (
+            <div className="user-menu-dropdown">
+              <button className="user-menu-item">Settings</button>
+              <button className="user-menu-item user-menu-signout" onClick={() => { setMenuOpen(false); signOut(); }}>Sign out</button>
+            </div>
+          )}
         </div>
       </header>
 
