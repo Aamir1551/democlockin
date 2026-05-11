@@ -1,5 +1,21 @@
 <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
   <rect width="40" height="40" rx="11" fill="#16a34a"/>
-  <path d="M20 8C15.03 8 11 12.03 11 17c0 6.75 9 15 9 15s9-8.25 9-15c0-4.97-4.03-9-9-9z" fill="white"/>
-  <path d="M16.5 17l2.5 2.5 4.5-4.5" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Location pin (white), circle centre y=13, tip y=23 -->
+  <path d="M20 5C15.58 5 12 8.58 12 13c0 3.54 2.08 6.6 5.1 8.07L20 23l2.9-1.93A9 9 0 0 0 28 13c0-4.42-3.58-8-8-8z" fill="white"/>
+  <!-- Hospital cross inside pin circle -->
+  <rect x="18.75" y="9"  width="2.5" height="8" rx="0.8" fill="#16a34a"/>
+  <rect x="15.5"  y="12" width="9"   height="2.5" rx="0.8" fill="#16a34a"/>
+
+  <!-- Hospital building, below pin -->
+  <!-- Upper wing (narrower) -->
+  <rect x="13" y="22" width="14" height="5" rx="1.5" fill="white"/>
+  <!-- Main body -->
+  <rect x="8"  y="26" width="24" height="10" rx="2" fill="white"/>
+  <!-- Entrance door -->
+  <rect x="17.5" y="29" width="5" height="7" rx="1" fill="#16a34a"/>
+  <!-- Left window -->
+  <rect x="10.5" y="28" width="4" height="3.5" rx="0.6" fill="#16a34a"/>
+  <!-- Right window -->
+  <rect x="25.5" y="28" width="4" height="3.5" rx="0.6" fill="#16a34a"/>
 </svg>
