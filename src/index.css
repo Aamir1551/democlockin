@@ -153,6 +153,35 @@ body {
 .no-shift { text-align: center; color: #6b7280; font-size: 0.95rem; padding: 2rem 0; }
 .no-shift strong { display: block; font-size: 1.1rem; color: #374151; margin-bottom: 0.25rem; }
 
+/* Shift block (card + button together) */
+.shift-block { width: 100%; display: flex; flex-direction: column; }
+
+/* Shift card header row */
+.shift-card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+.shift-clock-hint {
+  display: flex; align-items: center; gap: 0.3rem;
+  font-size: 0.72rem; color: var(--green); font-weight: 600;
+}
+
+/* Clock-in history inside shift card */
+.checkin-history {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #f3f4f6;
+  display: flex; flex-direction: column; gap: 0.3rem;
+}
+.checkin-row {
+  display: flex; align-items: center; gap: 0.5rem;
+  font-size: 0.78rem; color: #6b7280;
+}
+.checkin-index { font-weight: 600; color: #9ca3af; min-width: 1.5rem; }
+.checkin-times { flex: 1; }
+.checkin-dur   { font-weight: 500; color: #374151; }
+.checkin-flag  { color: var(--orange); }
+
 .or-line { display: flex; align-items: center; gap: 0.5rem; color: #d1d5db; font-size: 0.75rem; }
 .or-line::before, .or-line::after { content: ''; flex: 1; height: 1px; background: #e5e7eb; }
 
