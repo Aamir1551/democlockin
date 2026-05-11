@@ -10,6 +10,7 @@ export default function AgencyDashboard() {
   const [live, setLive]       = useState(null);
   const [history, setHistory] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [filters, setFilters] = useState({ worker: '', hospital: '', date: '', geofence: 'all' });
   const menuRef = useRef(null);
 
   useEffect(() => {
@@ -94,6 +95,23 @@ export default function AgencyDashboard() {
 
   const userName = currentUser?.user_metadata?.full_name || currentUser?.email || '';
 
+  function matchesFilter(value, filterStr) {
+    if (!filterStr.trim()) return true;
+    const terms = filterStr.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
+    return terms.some(term => value?.toLowerCase().includes(term));
+  }
+
+  const setFilter = (key, val) => setFilters(f => ({ ...f, [key]: val }));
+
+  const filteredHistory = (history || []).filter(c =>
+    matchesFilter(c.worker?.name || c.worker?.email || '', filters.worker) &&
+    matchesFilter(c.site?.name || '', filters.hospital) &&
+    matchesFilter(fmtDate(c.clocked_in_at), filters.date) &&
+    (filters.geofence === 'all' ||
+     (filters.geofence === 'pass'    &&  c.clock_in_geofence_passed) ||
+     (filters.geofence === 'outside' && !c.clock_in_geofence_passed))
+  );
+
   return (
     <>
       {/* Auth overlay */}
@@ -175,6 +193,36 @@ export default function AgencyDashboard() {
             <span>Check-in History</span>
             <button className="download-btn" onClick={exportExcel} disabled={!history?.length}>↓ Download Excel</button>
           </div>
+
+          {/* Filters */}
+          <div className="filter-bar">
+            <div className="filter-field">
+              <label className="filter-label">Worker</label>
+              <input type="text" placeholder="e.g. John, Jane" value={filters.worker} onChange={e => setFilter('worker', e.target.value)} />
+            </div>
+            <div className="filter-field">
+              <label className="filter-label">Hospital</label>
+              <input type="text" placeholder="e.g. UHCW, Dewsbury" value={filters.hospital} onChange={e => setFilter('hospital', e.target.value)} />
+            </div>
+            <div className="filter-field">
+              <label className="filter-label">Date</label>
+              <input type="text" placeholder="e.g. 11 May, 12 May" value={filters.date} onChange={e => setFilter('date', e.target.value)} />
+            </div>
+            <div className="filter-field">
+              <label className="filter-label">Geofence</label>
+              <select value={filters.geofence} onChange={e => setFilter('geofence', e.target.value)}>
+                <option value="all">All</option>
+                <option value="pass">Pass only</option>
+                <option value="outside">Outside only</option>
+              </select>
+            </div>
+            {(filters.worker || filters.hospital || filters.date || filters.geofence !== 'all') && (
+              <button className="filter-clear" onClick={() => setFilters({ worker: '', hospital: '', date: '', geofence: 'all' })}>
+                Clear
+              </button>
+            )}
+          </div>
+
           <div className="table-wrap">
             <table>
               <thead>
@@ -192,9 +240,9 @@ export default function AgencyDashboard() {
               <tbody>
                 {history === null ? (
                   <tr><td colSpan="8" className="empty">Loading…</td></tr>
-                ) : history.length === 0 ? (
-                  <tr><td colSpan="8" className="empty">No check-ins recorded yet.</td></tr>
-                ) : history.map(c => {
+                ) : filteredHistory.length === 0 ? (
+                  <tr><td colSpan="8" className="empty">No matching check-ins.</td></tr>
+                ) : filteredHistory.map(c => {
                   const dur  = fmtDuration(c.duration_minutes);
                   const dist = c.clock_in_distance_m != null ? `${c.clock_in_distance_m}m` : '—';
                   const passed = c.clock_in_geofence_passed;
