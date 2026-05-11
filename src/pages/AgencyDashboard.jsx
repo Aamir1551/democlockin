@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { authSb, dataSb } from '../lib/supabase.js';
+import Logo from '../components/Logo.jsx';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -261,7 +262,7 @@ export default function AgencyDashboard() {
       {/* Header */}
       <header>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.25rem' }}>
-          <div className="header-brand">Locum Check-In</div>
+          <Logo size={28} textSize="0.95rem" />
           <div className="header-sub">Agency Dashboard</div>
         </div>
         <div className="header-right">

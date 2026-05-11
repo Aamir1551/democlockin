@@ -47,7 +47,6 @@ body {
   box-shadow: 0 1px 8px rgba(0,0,0,0.06);
   margin-top: 4rem;
 }
-.auth-logo  { font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; color: #9ca3af; }
 .auth-title { font-size: 1.4rem; font-weight: 700; color: #111827; }
 .auth-sub   { font-size: 0.875rem; color: #6b7280; line-height: 1.5; }
 
@@ -284,3 +283,53 @@ select:focus, input:focus { border-color: #6b7280; }
 
 .refresh-btn { font-size: 0.75rem; color: #9ca3af; cursor: pointer; border: none; background: none; font-family: inherit; }
 .refresh-btn:hover { color: #374151; }
+
+/* ─── Responsive ──────────────────────────────────────────────────────────── */
+
+/* Agency: collapse header on small screens */
+@media (max-width: 640px) {
+  header {
+    padding: 0 1rem;
+    height: auto;
+    min-height: 56px;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
+  }
+
+  .header-sub { display: none; }
+
+  .header-right { gap: 0.5rem; }
+
+  main { padding: 1rem; gap: 1.5rem; }
+
+  /* Table: make it horizontally scrollable */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { min-width: 560px; }
+
+  /* Modal: full width with margin */
+  .modal {
+    max-width: calc(100vw - 2rem);
+    padding: 1.25rem;
+  }
+
+  /* Agency auth box */
+  .auth-box { padding: 1.5rem 1.25rem; }
+
+  /* Live grid: single column on very small screens */
+  .live-grid { grid-template-columns: 1fr; }
+}
+
+/* Worker app: ensure it fills the viewport nicely on tall phones */
+@media (max-width: 430px) {
+  .auth-card { margin-top: 2rem; padding: 1.5rem 1.25rem; }
+  .worker-body { padding: 1rem 0.75rem 3rem; }
+  .timer { font-size: 2rem; }
+}
+
+/* Tablets: agency grid 2 columns */
+@media (min-width: 641px) and (max-width: 900px) {
+  main { padding: 1.5rem; }
+  .live-grid { grid-template-columns: repeat(2, 1fr); }
+}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { authSb, dataSb } from '../lib/supabase.js';
 import { checkSite } from '../lib/geo.js';
+import Logo from '../components/Logo.jsx';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -254,8 +255,8 @@ export default function WorkerApp() {
       <div className={`view${view === 'auth' ? ' active' : ''}`}>
         <div className="auth-card">
           <div>
-            <div className="auth-logo">Locum Check-In</div>
-            <div className="auth-title" style={{ marginTop: '0.5rem' }}>Sign in to start</div>
+            <Logo size={40} textSize="1.25rem" />
+            <div className="auth-title" style={{ marginTop: '1rem' }}>Sign in to start</div>
             <div className="auth-sub" style={{ marginTop: '0.4rem' }}>
               Use the same account your agency registered you with.
             </div>
@@ -273,7 +274,7 @@ export default function WorkerApp() {
       {/* ── Home view ── */}
       <div className={`view${view === 'home' ? ' active' : ''}`}>
         <div className="topbar">
-          <div className="topbar-brand">Locum Check-In</div>
+          <Logo size={26} textSize="0.9rem" />
           <div className="topbar-user" onClick={signOut}>{workerName || 'Sign out'}</div>
         </div>
 
@@ -344,7 +345,7 @@ export default function WorkerApp() {
       {/* ── Active shift view ── */}
       <div className={`view${view === 'active' ? ' active' : ''}`}>
         <div className="topbar">
-          <div className="topbar-brand">Locum Check-In</div>
+          <Logo size={26} textSize="0.9rem" />
           <div className="topbar-user">{workerName}</div>
         </div>
 
@@ -385,7 +386,7 @@ export default function WorkerApp() {
       {/* ── Confirmation view ── */}
       <div className={`view${view === 'confirm' ? ' active' : ''}`}>
         <div className="topbar">
-          <div className="topbar-brand">Locum Check-In</div>
+          <Logo size={26} textSize="0.9rem" />
         </div>
 
         {confirmData && todayShift && (
