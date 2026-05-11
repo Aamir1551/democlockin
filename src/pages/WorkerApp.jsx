@@ -1,21 +1,12 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { authSb, dataSb } from '../lib/supabase.js';
 import { checkSite } from '../lib/geo.js';
 import Logo from '../components/Logo.jsx';
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmtTime(d) {
   return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 
-function fmtDuration(ms) {
-  const s = Math.floor(ms / 1000);
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sc = s % 60;
-  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sc).padStart(2,'0')}`;
-}
-
-// ── Google SVG ────────────────────────────────────────────────────────────────
 
 const GoogleSvg = () => (
   <svg width="16" height="16" viewBox="0 0 48 48">
@@ -35,40 +26,19 @@ const MicrosoftSvg = () => (
   </svg>
 );
 
-// ── Main component ────────────────────────────────────────────────────────────
-
 export default function WorkerApp() {
-  // view: 'auth' | 'home' | 'active' | 'confirm'
-  const [view, setView]               = useState('auth');
-  const [currentUser, setCurrentUser] = useState(null);
-  const [workerRow, setWorkerRow]     = useState(null);
-  const [todayShift, setTodayShift]   = useState(null);
+  const [view, setView]                 = useState('auth');
+  const [currentUser, setCurrentUser]   = useState(null);
+  const [workerRow, setWorkerRow]       = useState(null);
+  const [todayShifts, setTodayShifts]   = useState([]);   // all shifts for today
+  const [activeShift, setActiveShift]   = useState(null); // shift currently clocked into
   const [activeCheckIn, setActiveCheckIn] = useState(null);
-  const [clockInTime, setClockInTime] = useState(null);
-  const [timerDisplay, setTimerDisplay] = useState('00:00:00');
-  const [homeAlert, setHomeAlert]     = useState(null); // { type, title, body, warnData }
-  const [activeAlert, setActiveAlert] = useState(null);
-  const [clockInLoading, setClockInLoading] = useState(false);
+  const [clockInTime, setClockInTime]   = useState(null);
+  const [homeAlert, setHomeAlert]       = useState(null); // { type, title?, body?, warnData? }
+  const [activeAlert, setActiveAlert]   = useState(null);
+  const [loadingShiftId, setLoadingShiftId] = useState(null); // which shift's btn is spinning
   const [clockOutLoading, setClockOutLoading] = useState(false);
-  const [confirmData, setConfirmData] = useState(null);
-
-  const timerRef = useRef(null);
-
-  // ── Timer ──────────────────────────────────────────────────────────────────
-
-  const stopTimer = useCallback(() => {
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-  }, []);
-
-  const startTimer = useCallback((fromTime) => {
-    stopTimer();
-    timerRef.current = setInterval(() => {
-      const elapsed = Date.now() - fromTime.getTime();
-      setTimerDisplay(fmtDuration(elapsed));
-    }, 1000);
-  }, [stopTimer]);
-
-  useEffect(() => () => stopTimer(), [stopTimer]);
+  const [confirmData, setConfirmData]   = useState(null);
 
   // ── Auth ───────────────────────────────────────────────────────────────────
 
@@ -78,9 +48,8 @@ export default function WorkerApp() {
       setCurrentUser(user);
       if (user) {
         const worker = await ensureWorker(user);
-        await loadTodayShift(user, worker);
+        if (worker) await loadShifts(worker);
       } else {
-        stopTimer();
         setView('auth');
       }
     });
@@ -94,9 +63,8 @@ export default function WorkerApp() {
   async function signOut() {
     if (!confirm('Sign out?')) return;
     await authSb.auth.signOut();
-    setCurrentUser(null); setWorkerRow(null); setTodayShift(null);
-    setActiveCheckIn(null); setClockInTime(null);
-    stopTimer();
+    setCurrentUser(null); setWorkerRow(null); setTodayShifts([]);
+    setActiveShift(null); setActiveCheckIn(null); setClockInTime(null);
     setView('auth');
   }
 
@@ -104,49 +72,56 @@ export default function WorkerApp() {
 
   async function ensureWorker(user) {
     const name  = user.user_metadata?.full_name || user.email.split('@')[0];
-    const email = user.email;
     const { data, error } = await dataSb.from('workers')
-      .upsert({ auth_user_id: user.id, name, email }, { onConflict: 'auth_user_id' })
+      .upsert({ auth_user_id: user.id, name, email: user.email }, { onConflict: 'auth_user_id' })
       .select().single();
     if (!error) { setWorkerRow(data); return data; }
     return null;
   }
 
-  // ── Load today's shift ─────────────────────────────────────────────────────
+  // ── Load all today's shifts ────────────────────────────────────────────────
 
-  async function loadTodayShift(user, worker) {
+  async function loadShifts(worker) {
     const wr = worker || workerRow;
     if (!wr) return;
 
-    const todayStart = new Date(); todayStart.setHours(0,0,0,0);
-    const todayEnd   = new Date(); todayEnd.setHours(23,59,59,999);
+    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    const todayEnd   = new Date(); todayEnd.setHours(23, 59, 59, 999);
 
     const { data: shifts } = await dataSb.from('shifts')
       .select('*, site:sites(*)')
       .eq('worker_id', wr.id)
       .gte('scheduled_start', todayStart.toISOString())
       .lte('scheduled_start', todayEnd.toISOString())
-      .order('scheduled_start')
-      .limit(1);
+      .order('scheduled_start');
 
-    const shift = shifts?.[0] ?? null;
-    setTodayShift(shift);
-
-    let ci = null;
-    if (shift) {
-      const { data } = await dataSb.from('check_ins')
-        .select('*')
-        .eq('shift_id', shift.id)
-        .is('clocked_out_at', null)
-        .maybeSingle();
-      ci = data;
+    if (!shifts?.length) {
+      setTodayShifts([]);
+      setView('home');
+      return;
     }
-    setActiveCheckIn(ci);
 
-    if (ci) {
-      const t = new Date(ci.clocked_in_at);
+    // Load check-ins for all today's shifts in one query
+    const shiftIds = shifts.map(s => s.id);
+    const { data: checkIns } = await dataSb.from('check_ins')
+      .select('*')
+      .in('shift_id', shiftIds);
+
+    // Attach check-in to each shift
+    const enriched = shifts.map(s => ({
+      ...s,
+      checkIn: checkIns?.find(c => c.shift_id === s.id) ?? null,
+    }));
+
+    setTodayShifts(enriched);
+
+    // If any shift is currently active (clocked in, not out), jump straight there
+    const active = enriched.find(s => s.checkIn && !s.checkIn.clocked_out_at);
+    if (active) {
+      const t = new Date(active.checkIn.clocked_in_at);
+      setActiveShift(active);
+      setActiveCheckIn(active.checkIn);
       setClockInTime(t);
-      startTimer(t);
       setView('active');
     } else {
       setView('home');
@@ -155,35 +130,33 @@ export default function WorkerApp() {
 
   // ── Clock in ───────────────────────────────────────────────────────────────
 
-  function clockIn() {
-    setClockInLoading(true);
+  function clockIn(shift) {
+    setLoadingShiftId(shift.id);
     setHomeAlert(null);
 
     navigator.geolocation.getCurrentPosition(async (pos) => {
       const { latitude: lat, longitude: lon } = pos.coords;
-      const site   = todayShift.site;
-      const result = checkSite(lat, lon, site);
+      const result = checkSite(lat, lon, shift.site);
 
       if (result.inside) {
-        await doClockIn(lat, lon, result, true);
+        await doClockIn(shift, lat, lon, result, true);
       } else {
-        setClockInLoading(false);
-        setHomeAlert({ type: 'warn', warnData: { lat, lon, result, site } });
+        setLoadingShiftId(null);
+        setHomeAlert({ type: 'warn', warnData: { shift, lat, lon, result } });
       }
     }, (err) => {
-      setClockInLoading(false);
+      setLoadingShiftId(null);
       const msgs = { 1: 'Location permission denied.', 2: 'Position unavailable.', 3: 'Request timed out.' };
       setHomeAlert({ type: 'error', title: 'Location error', body: msgs[err.code] || 'Unknown error.' });
     }, { enableHighAccuracy: true, timeout: 12000 });
   }
 
-  async function doClockIn(lat, lon, result, geofencePassed) {
+  async function doClockIn(shift, lat, lon, result, geofencePassed) {
     setHomeAlert(null);
-    const site = todayShift.site;
     const { data, error } = await dataSb.from('check_ins').insert({
-      shift_id: todayShift.id,
+      shift_id: shift.id,
       worker_id: workerRow.id,
-      site_id: site.id,
+      site_id: shift.site.id,
       clocked_in_at: new Date().toISOString(),
       clock_in_lat: lat,
       clock_in_lon: lon,
@@ -192,14 +165,14 @@ export default function WorkerApp() {
     }).select().single();
 
     if (!error) {
-      setActiveCheckIn(data);
-      await dataSb.from('shifts').update({ status: 'active' }).eq('id', todayShift.id);
+      await dataSb.from('shifts').update({ status: 'active' }).eq('id', shift.id);
       const t = new Date(data.clocked_in_at);
+      setActiveShift({ ...shift, checkIn: data });
+      setActiveCheckIn(data);
       setClockInTime(t);
-      startTimer(t);
       setView('active');
     }
-    setClockInLoading(false);
+    setLoadingShiftId(null);
   }
 
   // ── Clock out ──────────────────────────────────────────────────────────────
@@ -212,8 +185,7 @@ export default function WorkerApp() {
       const { latitude: lat, longitude: lon } = pos.coords;
       const now = new Date();
       const durationMins = Math.round((now - clockInTime) / 60000);
-      const site = todayShift.site;
-      const result = checkSite(lat, lon, site);
+      const result = checkSite(lat, lon, activeShift.site);
 
       await dataSb.from('check_ins').update({
         clocked_out_at: now.toISOString(),
@@ -223,9 +195,8 @@ export default function WorkerApp() {
         duration_minutes: durationMins,
       }).eq('id', activeCheckIn.id);
 
-      await dataSb.from('shifts').update({ status: 'complete' }).eq('id', todayShift.id);
+      await dataSb.from('shifts').update({ status: 'complete' }).eq('id', activeShift.id);
 
-      stopTimer();
       setConfirmData({ clockOutTime: now, durationMins, distOut: result.distance });
       setClockOutLoading(false);
       setView('confirm');
@@ -236,17 +207,27 @@ export default function WorkerApp() {
     }, { enableHighAccuracy: true, timeout: 12000 });
   }
 
-  // ── Go home (after confirm) ────────────────────────────────────────────────
-
   async function goHome() {
+    setActiveShift(null);
     setActiveCheckIn(null);
     setConfirmData(null);
-    await loadTodayShift(currentUser, workerRow);
+    await loadShifts(workerRow);
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  const workerName = workerRow?.name || currentUser?.user_metadata?.full_name || '';
+
+  function shiftStatus(shift) {
+    const now = new Date();
+    const end = new Date(shift.scheduled_end);
+    if (shift.checkIn && !shift.checkIn.clocked_out_at) return 'active';
+    if (shift.checkIn && shift.checkIn.clocked_out_at)  return 'complete';
+    if (now >= end)                                       return 'expired';
+    return 'available';
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
-
-  const workerName = workerRow?.name || currentUser?.user_metadata?.full_name || '';
 
   return (
     <div className="worker-body">
@@ -278,63 +259,89 @@ export default function WorkerApp() {
           <div className="topbar-user" onClick={signOut}>{workerName || 'Sign out'}</div>
         </div>
 
-        {todayShift ? (
-          <>
-            <div className="shift-card" style={{ width: '100%' }}>
-              <div className="status-badge badge-upcoming">Today's Shift</div>
-              <div className="shift-site">{todayShift.site.name}</div>
-              {todayShift.ward && <div className="shift-ward">{todayShift.ward}</div>}
-              <div className="shift-time">
-                {fmtTime(new Date(todayShift.scheduled_start))} – {fmtTime(new Date(todayShift.scheduled_end))}
-              </div>
-              <div className="shift-worker">{workerName}</div>
-            </div>
-
-            <button
-              className="action-btn btn-clock-in"
-              style={{ marginTop: '1.5rem' }}
-              onClick={clockIn}
-              disabled={clockInLoading}
-            >
-              {clockInLoading ? 'Getting location…' : '▶ CLOCK IN'}
-            </button>
-          </>
-        ) : (
+        {todayShifts.length === 0 ? (
           <div className="no-shift">
-            <strong>No shift today</strong>
+            <strong>No shifts today</strong>
             You have no shifts scheduled for today.
           </div>
+        ) : (
+          todayShifts.map(shift => {
+            const status   = shiftStatus(shift);
+            const start    = new Date(shift.scheduled_start);
+            const end      = new Date(shift.scheduled_end);
+            const isLoading = loadingShiftId === shift.id;
+            const isWarn    = homeAlert?.type === 'warn' && homeAlert.warnData?.shift.id === shift.id;
+
+            return (
+              <div key={shift.id} style={{ width: '100%' }}>
+                <div className={`shift-card${status === 'expired' ? ' shift-card--expired' : ''}`}>
+                  {status === 'available' && <div className="status-badge badge-upcoming">Upcoming</div>}
+                  {status === 'complete'  && <div className="status-badge badge-complete">✓ Complete</div>}
+                  {status === 'expired'   && <div className="status-badge badge-expired">Expired</div>}
+
+                  <div className="shift-site">{shift.site.name}</div>
+                  {shift.ward && <div className="shift-ward">{shift.ward}</div>}
+                  <div className="shift-time">{fmtTime(start)} – {fmtTime(end)}</div>
+                  <div className="shift-worker">{workerName}</div>
+
+                  {status === 'complete' && shift.checkIn && (
+                    <div className="shift-worker" style={{ marginTop: '0.4rem' }}>
+                      {fmtTime(new Date(shift.checkIn.clocked_in_at))} → {fmtTime(new Date(shift.checkIn.clocked_out_at))}
+                      {' · '}{shift.checkIn.duration_minutes}m
+                    </div>
+                  )}
+                </div>
+
+                {status === 'available' && !isWarn && (
+                  <button
+                    className="action-btn btn-clock-in"
+                    style={{ marginTop: '0.75rem' }}
+                    onClick={() => clockIn(shift)}
+                    disabled={isLoading || loadingShiftId !== null}
+                  >
+                    {isLoading ? 'Getting location…' : '▶ CLOCK IN'}
+                  </button>
+                )}
+
+                {status === 'expired' && (
+                  <p className="shift-expired-note">Clock-in window closed</p>
+                )}
+
+                {/* Geo warning for this specific shift */}
+                {isWarn && (
+                  <div className="alert warn" style={{ marginTop: '0.75rem' }}>
+                    <div className="alert-title">You're far from site</div>
+                    You appear to be <strong>{homeAlert.warnData.result.distance}m</strong> away from {shift.site.name}.
+                    <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem' }}>
+                      <button
+                        className="action-btn btn-secondary"
+                        style={{ flex: 1, padding: '0.6rem', fontSize: '0.85rem' }}
+                        onClick={() => setHomeAlert(null)}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        className="action-btn btn-clock-in"
+                        style={{ flex: 1, padding: '0.6rem', fontSize: '0.85rem' }}
+                        onClick={() => doClockIn(
+                          homeAlert.warnData.shift,
+                          homeAlert.warnData.lat,
+                          homeAlert.warnData.lon,
+                          homeAlert.warnData.result,
+                          false
+                        )}
+                      >
+                        Clock in anyway
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })
         )}
 
-        {/* Home alerts */}
-        {homeAlert && homeAlert.type === 'warn' && homeAlert.warnData && (
-          <div className="alert warn" style={{ width: '100%' }}>
-            <div className="alert-title">You're far from site</div>
-            You appear to be <strong>{homeAlert.warnData.result.distance}m</strong> away from {homeAlert.warnData.site.name}.
-            <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem' }}>
-              <button
-                className="action-btn btn-secondary"
-                style={{ flex: 1, padding: '0.6rem', fontSize: '0.85rem' }}
-                onClick={() => setHomeAlert(null)}
-              >
-                Cancel
-              </button>
-              <button
-                className="action-btn btn-clock-in"
-                style={{ flex: 1, padding: '0.6rem', fontSize: '0.85rem' }}
-                onClick={() => doClockIn(
-                  homeAlert.warnData.lat,
-                  homeAlert.warnData.lon,
-                  homeAlert.warnData.result,
-                  false
-                )}
-              >
-                Clock in anyway
-              </button>
-            </div>
-          </div>
-        )}
-        {homeAlert && homeAlert.type === 'error' && (
+        {homeAlert?.type === 'error' && (
           <div className="alert error" style={{ width: '100%' }}>
             <div className="alert-title">{homeAlert.title}</div>
             {homeAlert.body}
@@ -349,23 +356,19 @@ export default function WorkerApp() {
           <div className="topbar-user">{workerName}</div>
         </div>
 
-        {todayShift && (
+        {activeShift && (
           <div className="shift-card" style={{ width: '100%' }}>
             <div className="status-badge badge-active">● Live</div>
-            <div className="shift-site">{todayShift.site?.name}</div>
-            <div className="shift-ward">{todayShift.ward || ''}</div>
+            <div className="shift-site">{activeShift.site?.name}</div>
+            {activeShift.ward && <div className="shift-ward">{activeShift.ward}</div>}
             <div className="shift-time">
-              {todayShift.scheduled_start && fmtTime(new Date(todayShift.scheduled_start))} –{' '}
-              {todayShift.scheduled_end && fmtTime(new Date(todayShift.scheduled_end))}
+              {fmtTime(new Date(activeShift.scheduled_start))} – {fmtTime(new Date(activeShift.scheduled_end))}
             </div>
             <div className="shift-worker">
               {clockInTime ? `Clocked in at ${fmtTime(clockInTime)}` : ''}
             </div>
           </div>
         )}
-
-        <div className="timer">{timerDisplay}</div>
-        <div className="timer-label">time on shift</div>
 
         <button
           className="action-btn btn-clock-out"
@@ -389,19 +392,19 @@ export default function WorkerApp() {
           <Logo size={26} textSize="0.9rem" />
         </div>
 
-        {confirmData && todayShift && (
+        {confirmData && activeShift && (
           <div className="confirm-card">
             <div className="confirm-icon">✅</div>
             <div className="confirm-title">Shift complete</div>
             <div style={{ height: '0.5rem' }} />
             <div className="confirm-row">
               <span className="label">Site</span>
-              <span className="value">{todayShift.site?.name}</span>
+              <span className="value">{activeShift.site?.name}</span>
             </div>
-            {todayShift.ward && (
+            {activeShift.ward && (
               <div className="confirm-row">
                 <span className="label">Ward</span>
-                <span className="value">{todayShift.ward}</span>
+                <span className="value">{activeShift.ward}</span>
               </div>
             )}
             <div className="confirm-row">

@@ -73,6 +73,10 @@ body {
 .badge-upcoming { background: #f3f4f6; color: #6b7280; }
 .badge-active   { background: var(--green-light); color: var(--green); }
 .badge-complete { background: #eff6ff; color: #2563eb; }
+.badge-expired  { background: #fef2f2; color: #b91c1c; }
+
+.shift-card--expired { opacity: 0.55; }
+.shift-expired-note  { font-size: 0.78rem; color: #9ca3af; margin-top: 0.4rem; text-align: center; }
 
 /* Big action button */
 .action-btn {
