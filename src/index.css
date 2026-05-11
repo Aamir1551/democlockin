@@ -150,7 +150,7 @@ body {
 /* Layout */
 header {
   background: #fff; border-bottom: 1px solid #e5e7eb;
-  padding: 0 2rem; height: 56px;
+  padding: 0 2rem; height: 56px; position: relative;
   display: flex; align-items: center; justify-content: space-between;
 }
 .header-sub   { font-size: 0.75rem; color: #9ca3af; margin-left: 0.5rem; }

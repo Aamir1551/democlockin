@@ -106,10 +106,10 @@ export default function AgencyDashboard() {
 
       {/* Header */}
       <header>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <Logo size={28} textSize="0.95rem" />
-          <span className="header-sub">Agency</span>
-        </div>
+        <Logo size={28} textSize="0.95rem" />
+        <span style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', fontWeight: 700, fontSize: '0.95rem' }}>
+          Agency Dashboard
+        </span>
         <div className="header-right">
           <span className="header-user">{userName}</span>
           <button className="signout-btn" onClick={signOut}>Sign out</button>
