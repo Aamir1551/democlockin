@@ -1,14 +1,13 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { authSb, dataSb } from '../lib/supabase.js';
 import Logo from '../components/Logo.jsx';
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
 function fmtTime(d) {
-  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return new Date(d).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
-
-// ── SVG icons ─────────────────────────────────────────────────────────────────
+function fmtDate(d) {
+  return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+}
 
 const GoogleSvg = () => (
   <svg width="15" height="15" viewBox="0 0 48 48">
@@ -28,23 +27,10 @@ const MicrosoftSvg = () => (
   </svg>
 );
 
-// ── Main component ────────────────────────────────────────────────────────────
-
 export default function AgencyDashboard() {
   const [currentUser, setCurrentUser] = useState(null);
-  const [liveShifts, setLiveShifts]   = useState(null); // null = loading
-  const [history, setHistory]         = useState(null);
-  const [allWorkers, setAllWorkers]   = useState([]);
-  const [allSites, setAllSites]       = useState([]);
-  const [modalOpen, setModalOpen]     = useState(false);
-  const [modalWorker, setModalWorker] = useState('');
-  const [modalSite, setModalSite]     = useState('');
-  const [modalWard, setModalWard]     = useState('');
-  const [modalStart, setModalStart]   = useState('');
-  const [modalEnd, setModalEnd]       = useState('');
-  const [modalErr, setModalErr]       = useState('');
-  const [assignLoading, setAssignLoading] = useState(false);
-
+  const [live, setLive]       = useState(null);   // currently clocked-in workers
+  const [history, setHistory] = useState(null);   // completed check-ins
   const autoRefreshRef = useRef(null);
 
   // ── Auth ───────────────────────────────────────────────────────────────────
@@ -53,184 +39,47 @@ export default function AgencyDashboard() {
     const { data: { subscription } } = authSb.auth.onAuthStateChange(async (_e, session) => {
       const user = session?.user ?? null;
       setCurrentUser(user);
-      if (user) {
-        await loadAll();
-      }
+      if (user) await loadAll();
     });
     return () => subscription.unsubscribe();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line
 
-  // Auto-refresh live grid every 30s
   useEffect(() => {
-    if (currentUser) {
-      autoRefreshRef.current = setInterval(() => loadLive(), 30000);
-    }
-    return () => { if (autoRefreshRef.current) clearInterval(autoRefreshRef.current); };
-  }, [currentUser]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!currentUser) return;
+    autoRefreshRef.current = setInterval(loadLive, 30000);
+    return () => clearInterval(autoRefreshRef.current);
+  }, [currentUser]); // eslint-disable-line
 
   function signIn(provider) {
     authSb.auth.signInWithOAuth({ provider, options: { redirectTo: 'http://localhost:3000/agency' } });
   }
-
   async function signOut() {
     await authSb.auth.signOut();
     setCurrentUser(null);
   }
 
-  // ── Load everything ────────────────────────────────────────────────────────
+  // ── Data loading ───────────────────────────────────────────────────────────
 
   async function loadAll() {
-    await Promise.all([loadLive(), loadHistory(), loadWorkers(), loadSites()]);
+    await Promise.all([loadLive(), loadHistory()]);
   }
 
   async function loadLive() {
-    const todayStart = new Date(); todayStart.setHours(0,0,0,0);
-    const todayEnd   = new Date(); todayEnd.setHours(23,59,59,999);
-
-    const { data: shifts } = await dataSb.from('shifts')
-      .select('*, worker:workers(name, email), site:sites(name), check_ins(*)')
-      .gte('scheduled_start', todayStart.toISOString())
-      .lte('scheduled_start', todayEnd.toISOString())
-      .order('scheduled_start');
-
-    setLiveShifts(shifts || []);
+    // Workers currently clocked in (no clocked_out_at)
+    const { data } = await dataSb.from('check_ins')
+      .select('*, worker:workers(name, email), site:sites(name)')
+      .is('clocked_out_at', null)
+      .order('clocked_in_at', { ascending: false });
+    setLive(data || []);
   }
 
   async function loadHistory() {
-    const { data: checkIns } = await dataSb.from('check_ins')
-      .select('*, worker:workers(name), site:sites(name), shift:shifts(scheduled_start, scheduled_end, status, ward)')
-      .order('created_at', { ascending: false })
-      .limit(50);
-
-    setHistory(checkIns || []);
-  }
-
-  async function loadWorkers() {
-    const { data } = await dataSb.from('workers').select('id, name, email').order('name');
-    setAllWorkers(data || []);
-  }
-
-  async function loadSites() {
-    const { data } = await dataSb.from('sites').select('id, name, type').order('name');
-    setAllSites(data || []);
-  }
-
-  // ── Assign shift modal ─────────────────────────────────────────────────────
-
-  function openAssignModal() {
-    const today = new Date().toISOString().split('T')[0];
-    setModalWorker('');
-    setModalSite('');
-    setModalWard('');
-    setModalStart(`${today}T08:00`);
-    setModalEnd(`${today}T16:00`);
-    setModalErr('');
-    setModalOpen(true);
-  }
-
-  async function assignShift() {
-    setModalErr('');
-    if (!modalWorker || !modalSite || !modalStart || !modalEnd) {
-      setModalErr('Please fill in all required fields.');
-      return;
-    }
-    if (new Date(modalEnd) <= new Date(modalStart)) {
-      setModalErr('End time must be after start time.');
-      return;
-    }
-
-    setAssignLoading(true);
-    const { error } = await dataSb.from('shifts').insert({
-      worker_id: modalWorker,
-      site_id: modalSite,
-      ward: modalWard.trim() || null,
-      scheduled_start: new Date(modalStart).toISOString(),
-      scheduled_end: new Date(modalEnd).toISOString(),
-      status: 'upcoming',
-    });
-    setAssignLoading(false);
-
-    if (error) {
-      setModalErr(error.message);
-    } else {
-      setModalOpen(false);
-      await loadAll();
-    }
-  }
-
-  // ── Live grid card renderer ────────────────────────────────────────────────
-
-  function renderLiveCard(s) {
-    const ci = s.check_ins?.find(c => c.clocked_in_at);
-    const start = new Date(s.scheduled_start);
-    const lateThreshold = new Date(start.getTime() + 30 * 60000);
-    const now = new Date();
-    const isLate = !ci && now > lateThreshold;
-
-    let badge, dot, meta;
-    if (ci && !ci.clocked_out_at) {
-      badge = <span className="locum-badge badge-in">● Clocked in</span>;
-      dot = 'dot-green';
-      meta = `In since ${fmtTime(new Date(ci.clocked_in_at))} · ${ci.clock_in_distance_m ?? '?'}m from site`;
-    } else if (ci && ci.clocked_out_at) {
-      badge = <span className="locum-badge badge-complete">✓ Complete</span>;
-      dot = 'dot-grey';
-      meta = `${fmtTime(new Date(ci.clocked_in_at))} – ${fmtTime(new Date(ci.clocked_out_at))}`;
-    } else if (isLate) {
-      badge = <span className="locum-badge badge-late">⚠ Late / No show</span>;
-      dot = 'dot-red';
-      meta = `Expected at ${fmtTime(start)}`;
-    } else {
-      badge = <span className="locum-badge badge-upcoming">Upcoming</span>;
-      dot = 'dot-grey';
-      meta = `Starts at ${fmtTime(start)}`;
-    }
-
-    return (
-      <div className="locum-card" key={s.id}>
-        {badge}
-        <div className="locum-name">
-          <span className={`status-dot ${dot}`}></span>
-          {s.worker?.name || s.worker?.email}
-        </div>
-        <div className="locum-site">{s.site?.name}</div>
-        <div className="locum-meta">{meta}</div>
-      </div>
-    );
-  }
-
-  // ── History row renderer ───────────────────────────────────────────────────
-
-  function renderHistoryRow(c) {
-    const date = c.clocked_in_at ? new Date(c.clocked_in_at).toLocaleDateString('en-GB') : '—';
-    const inT  = c.clocked_in_at  ? fmtTime(new Date(c.clocked_in_at))  : '—';
-    const outT = c.clocked_out_at ? fmtTime(new Date(c.clocked_out_at)) : '—';
-    const dur  = c.duration_minutes
-      ? `${Math.floor(c.duration_minutes / 60)}h ${c.duration_minutes % 60}m`
-      : '—';
-    const dist   = c.clock_in_distance_m != null ? `${c.clock_in_distance_m}m` : '—';
-    const status = c.shift?.status || '—';
-    const passed = c.clock_in_geofence_passed;
-
-    return (
-      <tr key={c.id}>
-        <td>{c.worker?.name || '—'}</td>
-        <td>
-          {c.site?.name || '—'}
-          {c.shift?.ward && <div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{c.shift.ward}</div>}
-        </td>
-        <td>{date}</td>
-        <td>{inT}</td>
-        <td>{outT}</td>
-        <td>{dur}</td>
-        <td style={{ color: passed ? 'var(--green)' : 'var(--orange)' }}>
-          {dist} {passed ? '✓' : '⚠'}
-        </td>
-        <td>
-          <span className={`pill pill-${status}`}>{status.replace('_', ' ')}</span>
-        </td>
-      </tr>
-    );
+    const { data } = await dataSb.from('check_ins')
+      .select('*, worker:workers(name, email), site:sites(name)')
+      .not('clocked_out_at', 'is', null)
+      .order('clocked_in_at', { ascending: false })
+      .limit(100);
+    setHistory(data || []);
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -243,11 +92,9 @@ export default function AgencyDashboard() {
       <div className={`auth-overlay${currentUser ? ' hidden' : ''}`}>
         <div className="auth-box">
           <div>
-            <div style={{ fontSize: '0.68rem', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#9ca3af' }}>
-              Agency Dashboard
-            </div>
-            <h2 style={{ marginTop: '0.4rem' }}>Sign in</h2>
-            <p style={{ marginTop: '0.3rem' }}>Sign in to view your agency's live check-ins.</p>
+            <Logo size={32} textSize="1rem" />
+            <h2 style={{ marginTop: '0.75rem' }}>Agency Dashboard</h2>
+            <p style={{ marginTop: '0.3rem' }}>Sign in to monitor live check-ins.</p>
           </div>
           <button className="btn btn-auth-google-agency" onClick={() => signIn('google')}>
             <GoogleSvg /> Continue with Gmail
@@ -261,51 +108,64 @@ export default function AgencyDashboard() {
 
       {/* Header */}
       <header>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.25rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <Logo size={28} textSize="0.95rem" />
-          <div className="header-sub">Agency Dashboard</div>
+          <span className="header-sub">Agency</span>
         </div>
         <div className="header-right">
-          <div className="header-user">{userName}</div>
+          <span className="header-user">{userName}</span>
           <button className="signout-btn" onClick={signOut}>Sign out</button>
-          <button className="btn btn-primary" onClick={openAssignModal}>+ Assign Shift</button>
         </div>
       </header>
 
       <main>
 
-        {/* Live view */}
+        {/* Live — currently clocked in */}
         <div>
           <div className="section-title">
-            <span>Live — Today's Shifts</span>
+            <span>Live — Currently Clocked In</span>
             <button className="refresh-btn" onClick={loadAll}>↻ Refresh</button>
           </div>
           <div className="live-grid">
-            {liveShifts === null ? (
+            {live === null ? (
               <div className="empty">Loading…</div>
-            ) : liveShifts.length === 0 ? (
-              <div className="empty">No shifts scheduled today.</div>
+            ) : live.length === 0 ? (
+              <div className="empty">Nobody is currently clocked in.</div>
             ) : (
-              liveShifts.map(renderLiveCard)
+              live.map(ci => (
+                <div className="locum-card" key={ci.id}>
+                  <span className="locum-badge badge-in">● Clocked in</span>
+                  <div className="locum-name">
+                    <span className="status-dot dot-green"></span>
+                    {ci.worker?.name || ci.worker?.email}
+                  </div>
+                  <div className="locum-site">{ci.site?.name}</div>
+                  <div className="locum-meta">
+                    Since {fmtTime(ci.clocked_in_at)}
+                    {ci.clock_in_distance_m != null && ` · ${ci.clock_in_distance_m}m from site`}
+                    {!ci.clock_in_geofence_passed && ' · ⚠ outside geofence'}
+                  </div>
+                </div>
+              ))
             )}
           </div>
         </div>
 
-        {/* Shift history */}
+        {/* History */}
         <div>
-          <div className="section-title">Shift History</div>
+          <div className="section-title">Check-in History</div>
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
                   <th>Worker</th>
-                  <th>Site</th>
+                  <th>Hospital</th>
                   <th>Date</th>
                   <th>Clocked In</th>
                   <th>Clocked Out</th>
                   <th>Duration</th>
                   <th>Distance In</th>
-                  <th>Status</th>
+                  <th>Geofence</th>
                 </tr>
               </thead>
               <tbody>
@@ -313,84 +173,35 @@ export default function AgencyDashboard() {
                   <tr><td colSpan="8" className="empty">Loading…</td></tr>
                 ) : history.length === 0 ? (
                   <tr><td colSpan="8" className="empty">No check-ins recorded yet.</td></tr>
-                ) : (
-                  history.map(renderHistoryRow)
-                )}
+                ) : history.map(c => {
+                  const dur    = c.duration_minutes != null
+                    ? (c.duration_minutes >= 60
+                        ? `${Math.floor(c.duration_minutes / 60)}h ${c.duration_minutes % 60}m`
+                        : `${c.duration_minutes}m`)
+                    : '—';
+                  const dist   = c.clock_in_distance_m != null ? `${c.clock_in_distance_m}m` : '—';
+                  const passed = c.clock_in_geofence_passed;
+                  return (
+                    <tr key={c.id}>
+                      <td>{c.worker?.name || c.worker?.email || '—'}</td>
+                      <td>{c.site?.name || '—'}</td>
+                      <td>{fmtDate(c.clocked_in_at)}</td>
+                      <td>{fmtTime(c.clocked_in_at)}</td>
+                      <td>{c.clocked_out_at ? fmtTime(c.clocked_out_at) : '—'}</td>
+                      <td>{dur}</td>
+                      <td>{dist}</td>
+                      <td style={{ color: passed ? 'var(--green)' : 'var(--orange)', fontWeight: 600 }}>
+                        {passed ? '✓ Pass' : '⚠ Outside'}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         </div>
 
       </main>
-
-      {/* Assign shift modal */}
-      <div
-        className={`modal-bg${modalOpen ? '' : ' hidden'}`}
-        onClick={(e) => { if (e.target === e.currentTarget) setModalOpen(false); }}
-      >
-        <div className="modal" onClick={(e) => e.stopPropagation()}>
-          <h3>Assign Shift</h3>
-
-          <div>
-            <label className="field-label">Worker</label>
-            <select value={modalWorker} onChange={e => setModalWorker(e.target.value)}>
-              <option value="">Select worker…</option>
-              {allWorkers.map(w => (
-                <option key={w.id} value={w.id}>{w.name || w.email}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="field-label">Site</label>
-            <select value={modalSite} onChange={e => setModalSite(e.target.value)}>
-              <option value="">Select site…</option>
-              {allSites.map(s => (
-                <option key={s.id} value={s.id}>[{s.type}] {s.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="field-label">Ward / Location detail (optional)</label>
-            <input
-              type="text"
-              placeholder="e.g. Ward 7, A&E, ICU"
-              value={modalWard}
-              onChange={e => setModalWard(e.target.value)}
-            />
-          </div>
-
-          <div>
-            <label className="field-label">Shift start</label>
-            <input
-              type="datetime-local"
-              value={modalStart}
-              onChange={e => setModalStart(e.target.value)}
-            />
-          </div>
-
-          <div>
-            <label className="field-label">Shift end</label>
-            <input
-              type="datetime-local"
-              value={modalEnd}
-              onChange={e => setModalEnd(e.target.value)}
-            />
-          </div>
-
-          {modalErr && (
-            <div style={{ fontSize: '0.8rem', color: '#dc2626' }}>{modalErr}</div>
-          )}
-
-          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-            <button className="btn btn-ghost" onClick={() => setModalOpen(false)}>Cancel</button>
-            <button className="btn btn-primary" onClick={assignShift} disabled={assignLoading}>
-              {assignLoading ? 'Saving…' : 'Assign'}
-            </button>
-          </div>
-        </div>
-      </div>
     </>
   );
 }

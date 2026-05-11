@@ -25,28 +25,23 @@ const MicrosoftSvg = () => (
   </svg>
 );
 
-// Clock-in icon shown next to each shift card header
-const ClockInIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="12" cy="12" r="10"/>
-    <polyline points="12 6 12 12 16 14"/>
-  </svg>
-);
-
 export default function WorkerApp() {
   const [view, setView]               = useState('auth');
   const [currentUser, setCurrentUser] = useState(null);
   const [workerRow, setWorkerRow]     = useState(null);
-  // Each shift has: ...shiftFields, site, checkIns: []
-  const [todayShifts, setTodayShifts] = useState([]);
-  // The shift + open check-in currently being worked
-  const [activeShift, setActiveShift]       = useState(null);
-  const [openCheckIn, setOpenCheckIn]       = useState(null);
-  const [clockInTime, setClockInTime]       = useState(null);
-  const [loadingShiftId, setLoadingShiftId] = useState(null);
+
+  const [sites, setSites]             = useState([]);
+  const [selectedSiteId, setSelectedSiteId] = useState('');
+  const [siteFilter, setSiteFilter]   = useState('');
+
+  const [todayCheckIns, setTodayCheckIns] = useState([]);
+  const [openCheckIn, setOpenCheckIn]     = useState(null);   // currently clocked in
+  const [openSite, setOpenSite]           = useState(null);   // site of open check-in
+  const [clockInTime, setClockInTime]     = useState(null);
+
+  const [clockInLoading, setClockInLoading]   = useState(false);
   const [clockOutLoading, setClockOutLoading] = useState(false);
-  const [homeAlert, setHomeAlert]           = useState(null); // { type, title?, body?, warnData? }
-  const [activeAlert, setActiveAlert]       = useState(null);
+  const [alert, setAlert]             = useState(null); // { type, title?, body?, warnData? }
 
   // ── Auth ───────────────────────────────────────────────────────────────────
 
@@ -56,7 +51,7 @@ export default function WorkerApp() {
       setCurrentUser(user);
       if (user) {
         const worker = await ensureWorker(user);
-        if (worker) await loadShifts(worker);
+        if (worker) await loadData(worker);
       } else {
         setView('auth');
       }
@@ -71,9 +66,8 @@ export default function WorkerApp() {
   async function signOut() {
     if (!confirm('Sign out?')) return;
     await authSb.auth.signOut();
-    setCurrentUser(null); setWorkerRow(null); setTodayShifts([]);
-    setActiveShift(null); setOpenCheckIn(null);
-    setView('auth');
+    setCurrentUser(null); setWorkerRow(null);
+    setOpenCheckIn(null); setView('auth');
   }
 
   // ── Worker profile ─────────────────────────────────────────────────────────
@@ -87,117 +81,95 @@ export default function WorkerApp() {
     return null;
   }
 
-  // ── Load all today's shifts + all their check-ins ──────────────────────────
+  // ── Load sites + today's check-ins ────────────────────────────────────────
 
-  async function loadShifts(worker) {
+  async function loadData(worker) {
     const wr = worker || workerRow;
     if (!wr) return;
 
-    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-    const todayEnd   = new Date(); todayEnd.setHours(23, 59, 59, 999);
+    // Load all hospital sites (sorted alphabetically)
+    const { data: siteRows } = await dataSb.from('sites')
+      .select('*')
+      .eq('type', 'hospital')
+      .order('name');
+    setSites(siteRows || []);
 
-    const { data: shifts } = await dataSb.from('shifts')
+    // Load today's check-ins for this worker
+    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    const { data: cis } = await dataSb.from('check_ins')
       .select('*, site:sites(*)')
       .eq('worker_id', wr.id)
-      .gte('scheduled_start', todayStart.toISOString())
-      .lte('scheduled_start', todayEnd.toISOString())
-      .order('scheduled_start');
-
-    if (!shifts?.length) { setTodayShifts([]); setView('home'); return; }
-
-    // Fetch all check-ins for today's shifts in one query
-    const { data: allCheckIns } = await dataSb.from('check_ins')
-      .select('*')
-      .in('shift_id', shifts.map(s => s.id))
+      .gte('clocked_in_at', todayStart.toISOString())
       .order('clocked_in_at');
 
-    const enriched = shifts.map(s => ({
-      ...s,
-      checkIns: (allCheckIns || []).filter(c => c.shift_id === s.id),
-    }));
+    setTodayCheckIns(cis || []);
 
-    setTodayShifts(enriched);
+    const open = cis?.find(c => !c.clocked_out_at) ?? null;
+    setOpenCheckIn(open);
+    setOpenSite(open?.site ?? null);
+    if (open) setClockInTime(new Date(open.clocked_in_at));
 
-    // If any shift has an open check-in, go to active view
-    const activeS = enriched.find(s => s.checkIns.some(c => !c.clocked_out_at));
-    if (activeS) {
-      const open = activeS.checkIns.find(c => !c.clocked_out_at);
-      setActiveShift(activeS);
-      setOpenCheckIn(open);
-      setClockInTime(new Date(open.clocked_in_at));
-      setView('active');
-    } else {
-      setActiveShift(null);
-      setOpenCheckIn(null);
-      setView('home');
-    }
-  }
-
-  // ── Derive status for a shift ──────────────────────────────────────────────
-
-  function shiftStatus(shift) {
-    const now = new Date();
-    if (shift.checkIns.some(c => !c.clocked_out_at)) return 'active';
-    if (now >= new Date(shift.scheduled_end))          return 'expired';
-    return 'available'; // includes shifts with past completed check-ins
+    setView(open ? 'active' : 'home');
   }
 
   // ── Clock in ───────────────────────────────────────────────────────────────
 
-  function clockIn(shift) {
-    setLoadingShiftId(shift.id);
-    setHomeAlert(null);
+  function clockIn() {
+    const site = sites.find(s => s.id === selectedSiteId);
+    if (!site) { setAlert({ type: 'error', title: 'Select a hospital first' }); return; }
+
+    setClockInLoading(true);
+    setAlert(null);
 
     navigator.geolocation.getCurrentPosition(async (pos) => {
       const { latitude: lat, longitude: lon } = pos.coords;
-      const result = checkSite(lat, lon, shift.site);
+      const result = checkSite(lat, lon, site);
+
       if (result.inside) {
-        await doClockIn(shift, lat, lon, result, true);
+        await doClockIn(site, lat, lon, result, true);
       } else {
-        setLoadingShiftId(null);
-        setHomeAlert({ type: 'warn', warnData: { shift, lat, lon, result } });
+        setClockInLoading(false);
+        setAlert({ type: 'warn', warnData: { site, lat, lon, result } });
       }
     }, (err) => {
-      setLoadingShiftId(null);
+      setClockInLoading(false);
       const msgs = { 1: 'Location permission denied.', 2: 'Position unavailable.', 3: 'Request timed out.' };
-      setHomeAlert({ type: 'error', title: 'Location error', body: msgs[err.code] || 'Unknown error.' });
+      setAlert({ type: 'error', title: 'Location error', body: msgs[err.code] || 'Unknown error.' });
     }, { enableHighAccuracy: true, timeout: 12000 });
   }
 
-  async function doClockIn(shift, lat, lon, result, geofencePassed) {
-    setHomeAlert(null);
+  async function doClockIn(site, lat, lon, result, geofencePassed) {
+    setAlert(null);
     const { data, error } = await dataSb.from('check_ins').insert({
-      shift_id: shift.id,
       worker_id: workerRow.id,
-      site_id: shift.site.id,
+      site_id: site.id,
       clocked_in_at: new Date().toISOString(),
       clock_in_lat: lat,
       clock_in_lon: lon,
       clock_in_distance_m: result.distance,
       clock_in_geofence_passed: geofencePassed,
-    }).select().single();
+    }).select('*, site:sites(*)').single();
 
     if (!error) {
-      await dataSb.from('shifts').update({ status: 'active' }).eq('id', shift.id);
-      setActiveShift(shift);
       setOpenCheckIn(data);
+      setOpenSite(data.site);
       setClockInTime(new Date(data.clocked_in_at));
       setView('active');
     }
-    setLoadingShiftId(null);
+    setClockInLoading(false);
   }
 
   // ── Clock out ──────────────────────────────────────────────────────────────
 
   function clockOut() {
     setClockOutLoading(true);
-    setActiveAlert(null);
+    setAlert(null);
 
     navigator.geolocation.getCurrentPosition(async (pos) => {
       const { latitude: lat, longitude: lon } = pos.coords;
       const now = new Date();
       const durationMins = Math.round((now - clockInTime) / 60000);
-      const result = checkSite(lat, lon, activeShift.site);
+      const result = checkSite(lat, lon, openSite);
 
       await dataSb.from('check_ins').update({
         clocked_out_at: now.toISOString(),
@@ -207,34 +179,37 @@ export default function WorkerApp() {
         duration_minutes: durationMins,
       }).eq('id', openCheckIn.id);
 
-      // Mark shift upcoming again so it can be re-entered
-      await dataSb.from('shifts').update({ status: 'upcoming' }).eq('id', activeShift.id);
-
       setClockOutLoading(false);
-      // Reload all shifts and return to home
-      await loadShifts(workerRow);
+      await loadData(workerRow);
     }, (err) => {
       setClockOutLoading(false);
       const msgs = { 1: 'Location permission denied.', 2: 'Position unavailable.', 3: 'Timed out.' };
-      setActiveAlert({ type: 'error', title: 'Location error', body: msgs[err.code] || 'Unknown error.' });
+      setAlert({ type: 'error', title: 'Location error', body: msgs[err.code] || 'Unknown error.' });
     }, { enableHighAccuracy: true, timeout: 12000 });
   }
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  // ── Filtered site list for search ──────────────────────────────────────────
+
+  const filteredSites = siteFilter.trim().length < 2
+    ? sites
+    : sites.filter(s => s.name.toLowerCase().includes(siteFilter.toLowerCase()));
 
   const workerName = workerRow?.name || currentUser?.user_metadata?.full_name || '';
+  const completedToday = todayCheckIns.filter(c => c.clocked_out_at);
+
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="worker-body">
 
-      {/* ── Auth view ── */}
+      {/* ── Auth ── */}
       <div className={`view${view === 'auth' ? ' active' : ''}`}>
         <div className="auth-card">
           <div>
             <Logo size={40} textSize="1.25rem" />
             <div className="auth-title" style={{ marginTop: '1rem' }}>Sign in to start</div>
             <div className="auth-sub" style={{ marginTop: '0.4rem' }}>
-              Use the same account your agency registered you with.
+              Use your NHS or work account to clock in at any hospital.
             </div>
           </div>
           <button className="action-btn btn-auth-google" onClick={() => signIn('google')}>
@@ -247,141 +222,116 @@ export default function WorkerApp() {
         </div>
       </div>
 
-      {/* ── Home view — all shifts ── */}
+      {/* ── Home ── */}
       <div className={`view${view === 'home' ? ' active' : ''}`}>
         <div className="topbar">
           <Logo size={26} textSize="0.9rem" />
           <div className="topbar-user" onClick={signOut}>{workerName || 'Sign out'}</div>
         </div>
 
-        {todayShifts.length === 0 ? (
-          <div className="no-shift">
-            <strong>No shifts today</strong>
-            You have no shifts scheduled for today.
-          </div>
-        ) : (
-          todayShifts.map(shift => {
-            const status    = shiftStatus(shift);
-            const isLoading = loadingShiftId === shift.id;
-            const isWarn    = homeAlert?.type === 'warn' && homeAlert.warnData?.shift.id === shift.id;
-            const completed = shift.checkIns.filter(c => c.clocked_out_at);
-
-            return (
-              <div key={shift.id} className="shift-block">
-                {/* Card header */}
-                <div className={`shift-card${status === 'expired' ? ' shift-card--expired' : ''}`}>
-                  <div className="shift-card-header">
-                    <div>
-                      {status === 'available' && <div className="status-badge badge-upcoming">Upcoming</div>}
-                      {status === 'expired'   && <div className="status-badge badge-expired">Expired</div>}
-                    </div>
-                    {status === 'available' && (
-                      <div className="shift-clock-hint"><ClockInIcon /> Clock in available</div>
-                    )}
-                  </div>
-
-                  <div className="shift-site">{shift.site.name}</div>
-                  {shift.ward && <div className="shift-ward">{shift.ward}</div>}
-                  <div className="shift-time">
-                    {fmtTime(shift.scheduled_start)} – {fmtTime(shift.scheduled_end)}
-                  </div>
-                  <div className="shift-worker">{workerName}</div>
-
-                  {/* Past clock-in/out records for this shift */}
-                  {completed.length > 0 && (
-                    <div className="checkin-history">
-                      {completed.map((ci, i) => (
-                        <div key={ci.id} className="checkin-row">
-                          <span className="checkin-index">#{i + 1}</span>
-                          <span className="checkin-times">
-                            {fmtTime(ci.clocked_in_at)} → {fmtTime(ci.clocked_out_at)}
-                          </span>
-                          <span className="checkin-dur">{ci.duration_minutes}m</span>
-                          {!ci.clock_in_geofence_passed && (
-                            <span className="checkin-flag" title="Clocked in outside geofence">⚠</span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+        {/* Today's completed sessions */}
+        {completedToday.length > 0 && (
+          <div className="shift-card" style={{ width: '100%' }}>
+            <div className="shift-tag">Today's sessions</div>
+            <div className="checkin-history" style={{ marginTop: 0, paddingTop: 0, borderTop: 'none' }}>
+              {completedToday.map((ci, i) => (
+                <div key={ci.id} className="checkin-row">
+                  <span className="checkin-index">#{i + 1}</span>
+                  <span className="checkin-times">{ci.site?.name}</span>
+                  <span className="checkin-dur">{fmtTime(ci.clocked_in_at)} → {fmtTime(ci.clocked_out_at)}</span>
+                  {!ci.clock_in_geofence_passed && <span className="checkin-flag">⚠</span>}
                 </div>
-
-                {/* Action */}
-                {status === 'available' && !isWarn && (
-                  <button
-                    className="action-btn btn-clock-in"
-                    style={{ marginTop: '0.75rem' }}
-                    onClick={() => clockIn(shift)}
-                    disabled={isLoading || loadingShiftId !== null}
-                  >
-                    <ClockInIcon />
-                    {isLoading ? 'Getting location…' : completed.length > 0 ? '▶ CLOCK IN AGAIN' : '▶ CLOCK IN'}
-                  </button>
-                )}
-
-                {status === 'expired' && (
-                  <p className="shift-expired-note">Clock-in window closed</p>
-                )}
-
-                {/* Geo warning for this shift */}
-                {isWarn && (
-                  <div className="alert warn" style={{ marginTop: '0.75rem' }}>
-                    <div className="alert-title">You're far from site</div>
-                    You appear to be <strong>{homeAlert.warnData.result.distance}m</strong> away from {shift.site.name}.
-                    <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem' }}>
-                      <button
-                        className="action-btn btn-secondary"
-                        style={{ flex: 1, padding: '0.6rem', fontSize: '0.85rem' }}
-                        onClick={() => setHomeAlert(null)}
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        className="action-btn btn-clock-in"
-                        style={{ flex: 1, padding: '0.6rem', fontSize: '0.85rem' }}
-                        onClick={() => doClockIn(
-                          homeAlert.warnData.shift,
-                          homeAlert.warnData.lat,
-                          homeAlert.warnData.lon,
-                          homeAlert.warnData.result,
-                          false
-                        )}
-                      >
-                        Clock in anyway
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })
+              ))}
+            </div>
+          </div>
         )}
 
-        {homeAlert?.type === 'error' && (
+        {/* Clock-in form */}
+        <div className="shift-card" style={{ width: '100%' }}>
+          <div className="shift-tag">Clock in</div>
+
+          <label className="field-label" style={{ marginTop: '0.5rem' }}>Search hospital</label>
+          <input
+            type="text"
+            placeholder="Type to filter…"
+            value={siteFilter}
+            onChange={e => { setSiteFilter(e.target.value); setSelectedSiteId(''); }}
+            style={{ marginBottom: '0.5rem' }}
+          />
+
+          <label className="field-label">Select hospital</label>
+          <select
+            value={selectedSiteId}
+            onChange={e => setSelectedSiteId(e.target.value)}
+          >
+            <option value="">— choose a hospital —</option>
+            {filteredSites.map(s => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <button
+          className="action-btn btn-clock-in"
+          style={{ marginTop: '0.75rem' }}
+          onClick={clockIn}
+          disabled={clockInLoading || !selectedSiteId}
+        >
+          {clockInLoading ? 'Getting location…' : '▶ CLOCK IN'}
+        </button>
+
+        {/* Geo warning */}
+        {alert?.type === 'warn' && alert.warnData && (
+          <div className="alert warn" style={{ width: '100%' }}>
+            <div className="alert-title">You're far from site</div>
+            You appear to be <strong>{alert.warnData.result.distance}m</strong> away from {alert.warnData.site.name}.
+            <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem' }}>
+              <button
+                className="action-btn btn-secondary"
+                style={{ flex: 1, padding: '0.6rem', fontSize: '0.85rem' }}
+                onClick={() => setAlert(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="action-btn btn-clock-in"
+                style={{ flex: 1, padding: '0.6rem', fontSize: '0.85rem' }}
+                onClick={() => doClockIn(alert.warnData.site, alert.warnData.lat, alert.warnData.lon, alert.warnData.result, false)}
+              >
+                Clock in anyway
+              </button>
+            </div>
+          </div>
+        )}
+
+        {alert?.type === 'error' && (
           <div className="alert error" style={{ width: '100%' }}>
-            <div className="alert-title">{homeAlert.title}</div>
-            {homeAlert.body}
+            <div className="alert-title">{alert.title}</div>
+            {alert.body}
           </div>
         )}
       </div>
 
-      {/* ── Active view ── */}
+      {/* ── Active ── */}
       <div className={`view${view === 'active' ? ' active' : ''}`}>
         <div className="topbar">
           <Logo size={26} textSize="0.9rem" />
           <div className="topbar-user">{workerName}</div>
         </div>
 
-        {activeShift && (
+        {openSite && (
           <div className="shift-card" style={{ width: '100%' }}>
             <div className="status-badge badge-active">● Clocked in</div>
-            <div className="shift-site">{activeShift.site?.name}</div>
-            {activeShift.ward && <div className="shift-ward">{activeShift.ward}</div>}
-            <div className="shift-time">
-              {fmtTime(activeShift.scheduled_start)} – {fmtTime(activeShift.scheduled_end)}
-            </div>
+            <div className="shift-site">{openSite.name}</div>
             {clockInTime && (
-              <div className="shift-worker">Clocked in at {fmtTime(clockInTime)}</div>
+              <div className="shift-time" style={{ marginTop: '0.5rem' }}>
+                Since {fmtTime(clockInTime)}
+              </div>
+            )}
+            {!openCheckIn?.clock_in_geofence_passed && (
+              <div className="shift-worker" style={{ color: 'var(--orange)', marginTop: '0.3rem' }}>
+                ⚠ Clocked in outside geofence
+              </div>
             )}
           </div>
         )}
@@ -395,10 +345,10 @@ export default function WorkerApp() {
           {clockOutLoading ? 'Getting location…' : '⏹ CLOCK OUT'}
         </button>
 
-        {activeAlert && (
-          <div className={`alert ${activeAlert.type}`} style={{ width: '100%' }}>
-            <div className="alert-title">{activeAlert.title}</div>
-            {activeAlert.body}
+        {alert?.type === 'error' && (
+          <div className={`alert ${alert.type}`} style={{ width: '100%' }}>
+            <div className="alert-title">{alert.title}</div>
+            {alert.body}
           </div>
         )}
       </div>
